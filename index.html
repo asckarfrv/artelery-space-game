@@ -1265,11 +1265,11 @@ findShotFrom(sc, enemies){
   function toggleFullscreen(){ if (!document.fullscreenElement) { document.documentElement.requestFullscreen?.(); } else { document.exitFullscreen?.(); } }
 
   menuElem.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const btn = e.target.closest('button[data-p]');
-    if (!btn) return;
-    const players = parseInt(btn.getAttribute('data-p'), 10) || 2;
+	  const btn = e.target.closest('button[data-p]');
+	  if (!btn) return;               // даём чекбоксам/текстовым полям работать как обычно
+	  e.preventDefault();             // только для кнопок
+	  e.stopPropagation();            // только для кнопок
+	  const players = parseInt(btn.getAttribute('data-p'), 10) || 2;
     try {
       if (optFs.checked) { toggleFullscreen(); }
       if (game) { game.init(players); }
@@ -1312,5 +1312,120 @@ findShotFrom(sc, enemies){
   setupCanvasBackingStore();
   start();
 </script>
+<script>
+/* ==== 1) Безопасно объявляем NetRTC, если его ещё нет ==== */
+window.NetRTC = window.NetRTC || class NetRTC{
+  constructor(){ this.pc=null; this.dc=null; this.role=null; this.game=null; this.connected=false;
+    this.iceServers=[{urls:'stun:stun.l.google.com:19302'}]; }
+  attach(game){ this.game=game; }
+  _mk(){ this.pc = new RTCPeerConnection({iceServers:this.iceServers});
+    this.pc.oniceconnectionstatechange = ()=>{ const s=document.getElementById('netStatus'); if(s) s.textContent='Статус: '+this.pc.iceConnectionState; };
+    if (this.role==='client') this.pc.ondatachannel = (e)=>{ this.dc=e.channel; this._wireDC(); };
+  }
+  _wireDC(){ if(!this.dc) return;
+    this.dc.onopen = ()=>{ this.connected=true; const s=document.getElementById('netStatus'); if(s) s.textContent='Статус: онлайн (канал открыт)'; };
+    this.dc.onclose= ()=>{ this.connected=false; const s=document.getElementById('netStatus'); if(s) s.textContent='Статус: канал закрыт'; };
+    this.dc.onmessage=(ev)=>{ try{ const m=JSON.parse(ev.data); this.onMessage(m); }catch(e){ console.warn('DC parse',e); } };
+  }
+  onMessage(msg){ if(!this.game) return;
+    if (msg.t==='action' && this.role==='host'){ this.game.applyNetAction?.(msg.action, true); }
+    else if (msg.t==='state' && this.role==='client'){ this.game.applyState?.(msg.state); }
+  }
+  send(o){ if (this.dc && this.dc.readyState==='open') this.dc.send(JSON.stringify(o)); }
+  broadcastAction(action){ this.send({t:'action', action}); }
+  sendState(state){ this.send({t:'state', state}); }
+  async createHost(){ this.role='host'; this._mk(); this.dc=this.pc.createDataChannel('game'); this._wireDC();
+    const offer=await this.pc.createOffer(); await this.pc.setLocalDescription(offer);
+    return btoa(unescape(encodeURIComponent(JSON.stringify(this.pc.localDescription)))); }
+  async acceptAnswerFromBase64(b64){ const json=JSON.parse(decodeURIComponent(escape(atob(b64)))); await this.pc.setRemoteDescription(json); }
+  async connectClientFromBase64(b64){ this.role='client'; this._mk();
+    const offer=JSON.parse(decodeURIComponent(escape(atob(b64))));
+    await this.pc.setRemoteDescription(offer);
+    const answer=await this.pc.createAnswer(); await this.pc.setLocalDescription(answer);
+    return btoa(unescape(encodeURIComponent(JSON.stringify(this.pc.localDescription)))); }
+};
+
+/* ==== 2) Подключаем UI — ждём, пока DOM и (опционально) Game загрузятся ==== */
+(function wireP2P(){
+  // найдём элементы
+  const $ = id => document.getElementById(id);
+  const optP2P = $('optP2P'), p2pBox = $('p2pBox'), netStatus = $('netStatus');
+  const btnHostCreate=$('btnHostCreate'), btnHostCopyOffer=$('btnHostCopyOffer'),
+        btnHostSetAnswer=$('btnHostSetAnswer'), btnHostStartGame=$('btnHostStartGame'),
+        hostOffer=$('hostOffer'), hostAnswer=$('hostAnswer');
+  const btnClientConnect=$('btnClientConnect'), btnClientCopyAnswer=$('btnClientCopyAnswer'),
+        clientOffer=$('clientOffer'), clientAnswer=$('clientAnswer');
+
+  // базовая проверка DOM
+  const allOk = [optP2P,p2pBox,netStatus,btnHostCreate,btnHostSetAnswer,btnHostStartGame,
+                 hostOffer,hostAnswer,btnClientConnect,clientOffer,clientAnswer].every(Boolean);
+  if (!allOk) {
+    console.warn('[P2P] Не все элементы найдены. Проверьте id-ы разметки.');
+    return;
+  }
+
+  // раскрываем/скрываем панель по чекбоксу
+  p2pBox.style.display = optP2P.checked ? 'block' : 'none';
+  optP2P.addEventListener('change', ()=>{ p2pBox.style.display = optP2P.checked ? 'block' : 'none'; });
+
+  // единая сетка
+  if (!window.__net) window.__net = new NetRTC();
+
+  // Клики: ХОСТ
+  btnHostCreate.addEventListener('click', async ()=>{
+    try{ window.__net.role='host'; const off=await window.__net.createHost();
+      hostOffer.value=off; netStatus.textContent='Оффер создан'; console.log('[P2P] Host offer:', off.slice(0,32)+'…'); }
+    catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); console.error(e); }
+  });
+  btnHostCopyOffer?.addEventListener('click', async ()=>{
+    try{ await navigator.clipboard.writeText(hostOffer.value||''); netStatus.textContent='Оффер скопирован'; }catch{}
+  });
+  btnHostSetAnswer.addEventListener('click', async ()=>{
+    try{ const b64=(hostAnswer.value||'').trim(); if(!b64) return;
+      await window.__net.acceptAnswerFromBase64(b64);
+      netStatus.textContent='Ответ принят, ждём открытие канала'; }
+    catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); console.error(e); }
+  });
+  btnHostStartGame.addEventListener('click', ()=>{
+    if (!window.game){ netStatus.textContent='Сначала выбери число игроков (1–4)'; return; }
+    window.__net.attach(window.game); window.game.net = window.__net;
+    netStatus.textContent='Игра запущена как хост';
+  });
+
+  // Клики: КЛИЕНТ
+  btnClientConnect.addEventListener('click', async ()=>{
+    try{ const off=(clientOffer.value||'').trim(); if(!off) return;
+      const ans=await window.__net.connectClientFromBase64(off);
+      clientAnswer.value=ans; netStatus.textContent='Ответ создан — отправь хосту';
+      if (!window.game){ /* на всякий случай */ window.game = new (window.Game||function(){})();
+        if (!window.game.update) { /* если Game ещё не готов — просто логнем */ console.warn('[P2P] Game ещё не загружен — но канал установлен'); } }
+      window.__net.attach(window.game); window.game.net = window.__net;
+    }catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); console.error(e); }
+  });
+  btnClientCopyAnswer?.addEventListener('click', async ()=>{
+    try{ await navigator.clipboard.writeText(clientAnswer.value||''); netStatus.textContent='Ответ скопирован'; }catch{}
+  });
+
+  // Патч рассылки состояния у хоста — только когда Game реально объявлен
+  function patchGameWhenReady(){
+    if (!(window.Game && Game.prototype && Game.prototype.update)) return setTimeout(patchGameWhenReady, 50);
+    if (Game.prototype.__netPatched) return;
+    const _upd = Game.prototype.update;
+    Game.prototype.update = function(dt){
+      _upd.call(this, dt);
+      if (this.net && this.net.role==='host' && this.net.connected){
+        this._stateSendTimer = (this._stateSendTimer||0) + dt;
+        if (this._stateSendTimer > 0.1){ this._stateSendTimer=0; this.net.sendState(this.exportState?.()); }
+      }
+    };
+    Game.prototype.__netPatched = true;
+    console.log('[P2P] Game patched for host state broadcast');
+  }
+  patchGameWhenReady();
+
+  console.log('[P2P] UI wired');
+})();
+</script>
+
 </body>
 </html>
