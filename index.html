@@ -1274,6 +1274,16 @@ findShotFrom(sc, enemies){
       if (optFs.checked) { toggleFullscreen(); }
       if (game) { game.init(players); }
       else { game = new Game(players); }
+	  // после создания игры на хосте
+		if (window.__net && window.__net.role === 'host') {
+		  window.__net.attach(game);              // привязать сеть к игре
+		  // сказать клиенту, сколько игроков
+		  window.__net.send({ t: 'start', playerCount: players });
+		  // сразу отправить начальный снимок состояния
+		  if (typeof game.exportState === 'function') {
+		    window.__net.sendState(game.exportState());
+		  }
+		}
       closeMenu();
       overlayTextElem.textContent = `Игра начата — ход: Игрок ${game.currentPlayer+1}`;
       overlayElem.style.display = 'flex';
@@ -1327,10 +1337,30 @@ window.NetRTC = window.NetRTC || class NetRTC{
     this.dc.onclose= ()=>{ this.connected=false; const s=document.getElementById('netStatus'); if(s) s.textContent='Статус: канал закрыт'; };
     this.dc.onmessage=(ev)=>{ try{ const m=JSON.parse(ev.data); this.onMessage(m); }catch(e){ console.warn('DC parse',e); } };
   }
-  onMessage(msg){ if(!this.game) return;
-    if (msg.t==='action' && this.role==='host'){ this.game.applyNetAction?.(msg.action, true); }
-    else if (msg.t==='state' && this.role==='client'){ this.game.applyState?.(msg.state); }
+  onMessage(msg) {
+  if (!this.game && msg.t !== 'start') {
+    // если игра ещё не создана на клиенте — ждём start
   }
+
+  if (msg.t === 'start') {
+    // это видит КЛИЕНТ: создаём локальную копию игры
+    if (this.role === 'client') {
+      // если уже есть игра — не дублируем
+      if (!window.game) {
+        window.game = new Game(msg.playerCount || 2, this);
+        this.attach(window.game);
+        window.game.net = this;
+      }
+    }
+    return;
+  }
+
+  if (msg.t === 'action' && this.role === 'host') {
+    this.game?.applyNetAction?.(msg.action, true);
+  } else if (msg.t === 'state' && this.role === 'client') {
+    this.game?.applyState?.(msg.state);
+  }
+}
   send(o){ if (this.dc && this.dc.readyState==='open') this.dc.send(JSON.stringify(o)); }
   broadcastAction(action){ this.send({t:'action', action}); }
   sendState(state){ this.send({t:'state', state}); }
@@ -1481,4 +1511,5 @@ if (window.NetRTC) {
 
 </body>
 </html>
+
 
