@@ -1426,6 +1426,59 @@ window.NetRTC = window.NetRTC || class NetRTC{
   console.log('[P2P] UI wired');
 })();
 </script>
+<script>
+/* помощники кодирования */
+const enc = obj => btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+const dec = b64 => JSON.parse(decodeURIComponent(escape(atob(b64))));
+
+/* если NetRTC уже есть — расширим/перепишем только нужные методы */
+if (window.NetRTC) {
+  NetRTC.prototype.reset = function(){
+    try{ this.dc?.close(); }catch{}
+    try{ this.pc?.close(); }catch{}
+    this.pc = null; this.dc = null; this.connected = false;
+  };
+
+  NetRTC.prototype.createHost = async function(){
+    // всегда начинаем чисто
+    this.reset();
+    this.role = 'host';
+    this._mk();
+    this.dc = this.pc.createDataChannel('game');
+    this._wireDC();
+    const offer = await this.pc.createOffer();
+    await this.pc.setLocalDescription(offer); // -> have-local-offer
+    return enc(this.pc.localDescription);     // гарантированно offer
+  };
+
+  NetRTC.prototype.acceptAnswerFromBase64 = async function(b64){
+    if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
+      throw new Error('Сначала нажмите «Создать соединение», затем вставьте ответ один раз.');
+    }
+    const answer = dec(b64);
+    if (answer?.type !== 'answer') {
+      throw new Error('Ожидался ANSWER от клиента, похоже вы вставили OFFER.');
+    }
+    await this.pc.setRemoteDescription(answer); // -> stable
+  };
+
+  NetRTC.prototype.connectClientFromBase64 = async function(b64){
+    // клиент тоже начинает с нуля
+    this.reset();
+    this.role = 'client';
+    this._mk();
+    const offer = dec(b64);
+    if (offer?.type !== 'offer') {
+      throw new Error('Ожидался OFFER от хоста, проверьте, что не перепутали строки.');
+    }
+    await this.pc.setRemoteDescription(offer);  // -> have-remote-offer
+    const answer = await this.pc.createAnswer();
+    await this.pc.setLocalDescription(answer);  // -> stable
+    return enc(this.pc.localDescription);       // гарантированно answer
+  };
+}
+</script>
 
 </body>
 </html>
+
