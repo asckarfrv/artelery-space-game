@@ -1,0 +1,1316 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Космическая Артиллерия — + подсказка ветра, лимит прицеливания, метеориты, тонкая чувствительность</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; padding: 0; width:100%; height:100%; background:#000; color:#ddd; font-family: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+
+    .viewport { position: fixed; inset: 0; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; }
+    .stage { position: relative; width: 100vw; height: 100vh; }
+
+    canvas { display:block; width:100%; height:100%; background: radial-gradient(circle at center, #001020 30%, #000 100%); }
+
+    .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+    .overlay .text { color:#fff; font-size:36px; text-align:center; text-shadow: 0 0 10px rgba(0,0,0,0.8); }
+
+    .hud { position:absolute; top:10px; left:10px; color:#fff; font-size:16px; pointer-events:none; }
+    .controls { position:absolute; top:10px; right:10px; color:#fff; font-size:14px; pointer-events:none; text-align:right; }
+
+    .toolbar { position:absolute; bottom:10px; right:10px; display:flex; gap:8px; pointer-events:auto; }
+    .toolbar button { background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.18); color:#fff; padding:8px 10px; border-radius:10px; cursor:pointer; backdrop-filter: blur(4px); }
+    .toolbar button:hover { background: rgba(255,255,255,0.12); }
+
+    .menu { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background: radial-gradient(ellipse at center, rgba(0,0,0,0.55), rgba(0,0,0,0.9)); pointer-events:auto; }
+    .menu .panel { width:min(440px, 92vw); background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.18); border-radius:18px; padding:22px 24px; text-align:center; box-shadow: 0 10px 40px rgba(0,0,0,0.4); backdrop-filter: blur(6px); }
+    .menu h1 { margin: 6px 0 12px; font-size:28px; color:#fff; letter-spacing:0.5px; }
+    .menu p { margin: 0 0 10px; opacity:0.85; }
+    .menu .btns { display:flex; flex-wrap:wrap; justify-content:center; gap:10px; margin: 12px 0 8px; }
+    .menu .btns button { min-width:88px; font-size:16px; padding:10px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.22); background:#202020; color:#fff; cursor:pointer; }
+    .menu .btns button:hover { background:#2c2c2c; }
+    .menu .options { margin-top:8px; font-size:14px; opacity:0.9; display:flex; gap:10px; align-items:center; justify-content:center; }
+
+    /* Мини-карта */
+    #minimapWrap {
+      position:absolute; left:10px; bottom:10px;
+      width:240px; height:150px; pointer-events:none;
+      background: rgba(255,255,255,0.06);
+      border:1px solid rgba(255,255,255,0.18);
+      border-radius:12px; backdrop-filter: blur(4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      overflow:hidden;
+    }
+    #minimap { width:100%; height:100%; display:block; }
+
+    /* Сирена события */
+    .eventBanner { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#fff; font-size:28px; padding:10px 18px; border-radius:12px; background:rgba(255,70,70,0.2); border:1px solid rgba(255,70,70,0.4); pointer-events:none; display:none; }
+    /* Онлайн UI */
+    .netRow { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:10px; }
+    .netCol { flex:1 1 260px; min-width:260px; background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.18); border-radius:12px; padding:12px; }
+    .netCol h3 { margin:4px 0 8px; font-size:16px; color:#fff; }
+    .netCol textarea { width:100%; min-height:110px; resize:vertical; background:#0f0f0f; color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:10px; padding:8px; box-sizing:border-box; }
+    .netCol .row { display:flex; gap:8px; margin-top:8px; }
+    .netCol button, .menu .options button.inline { background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.22); color:#fff; padding:8px 10px; border-radius:10px; cursor:pointer; }
+    .netHint { font-size:12px; opacity:0.8; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div class="viewport">
+    <div class="stage" id="stage">
+      <canvas id="canvas"></canvas>
+
+      <div class="hud" id="hud"></div>
+      <div class="controls" id="controls">
+        Угол: <span id="angleVal">45</span>° · Мощность: <span id="powerVal">50</span><br>
+        ←/→ – угол (Shift: точнее) · ↑/↓ – мощность (Alt: точнее) · Пробел – выстрел · Enter – завершить ход · M – меню · 1–3/Q – оружие · E – щит · T – телепорт
+      </div>
+
+      <div class="overlay" id="overlay"><div class="text" id="overlayText"></div></div>
+
+      <div id="minimapWrap"><canvas id="minimap"></canvas></div>
+
+      <div class="toolbar">
+        <button id="btnMenu" title="Меню (M)">☰ Меню</button>
+        <button id="btnFs" title="Полноэкранный режим">⛶ Полноэкранно</button>
+      </div>
+
+      <div class="menu" id="menu">
+        <div class="panel">
+          <h1>Космическая Артиллерия</h1>
+          <p>Выберите число игроков:</p>
+          <div class="btns">
+            <button data-p="1">1 игрок</button>
+            <button data-p="2">2 игрока</button>
+            <button data-p="3">3 игрока</button>
+            <button data-p="4">4 игрока</button>
+          </div>
+          <div class="options">
+            <label><input type="checkbox" id="optFs"> Включить полноэкранный режим</label>
+            <label><input type="checkbox" id="optP2P"> Онлайн (P2P, без установки)</label>
+          </div>
+
+          <div id="p2pBox" style="display:none; margin-top:10px;">
+            <div class="netRow">
+              <div class="netCol">
+                <h3>Хост</h3>
+                <div class="row">
+                  <button id="btnHostCreate">Создать соединение</button>
+                  <button id="btnHostCopyOffer">Скопировать оффер</button>
+                </div>
+                <textarea id="hostOffer" placeholder="Оффер появится здесь — отправь другу"></textarea>
+                <div class="row">
+                  <button id="btnHostSetAnswer">Вставить ответ</button>
+                  <button id="btnHostStartGame">Старт игры (2 игрока)</button>
+                </div>
+                <textarea id="hostAnswer" placeholder="Вставь сюда ответ от друга"></textarea>
+                <div class="netHint">Хост — авторитетная симуляция. Друг присылает ответ, после чего можно нажать старт.</div>
+              </div>
+              <div class="netCol">
+                <h3>Клиент</h3>
+                <div class="row">
+                  <button id="btnClientConnect">Подключиться</button>
+                  <button id="btnClientCopyAnswer">Скопировать ответ</button>
+                </div>
+                <textarea id="clientOffer" placeholder="Вставь оффер от хоста сюда"></textarea>
+                <textarea id="clientAnswer" placeholder="Ответ появится здесь — отправь хосту"></textarea>
+                <div class="netHint">Клиент отправляет только действия. Состояние приходит от хоста.</div>
+              </div>
+            </div>
+            <div style="text-align:center; margin-top:8px; opacity:0.85;" id="netStatus">Статус: офлайн</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="eventBanner" id="eventBanner">☄ МЕТЕОРИТНЫЙ ДОЖДЬ!</div>
+
+    </div>
+  </div>
+
+<script>
+  // =====================
+  // Полноэкранная сцена + DPR
+  // =====================
+  let WIDTH = window.innerWidth;
+  let HEIGHT = window.innerHeight;
+  const G = 1.35;
+
+  // Усилители для гравитации снарядов
+  const PROJECTILE_GRAVITY_MULT = 2.6;
+  const PROJECTILE_MASS = 0.22;
+
+  // Новый: ограничение времени на прицеливание
+  const PREP_MAX_TIME = 12.0; // сек
+
+  const BLACK = '#000000';
+  const WHITE = '#ffffff';
+  const RED   = '#ff4d4d';
+  const GREEN = '#2ee52e';
+  const BLUE  = '#4da6ff';
+  const YELLOW= '#ffe066';
+  const ORANGE= '#ffa500';
+  const PURPLE= '#b266ff';
+
+  const COLORS = [RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE];
+  
+  const GEN = {
+  PLANET_MIN_GAP: 220,
+  SHIP_MIN_SEP:  320,
+  SHIP_ALT_MIN:   36,
+  SHIP_ALT_RAND:  28,
+  SAME_PLANET_ANG_MIN: 1.2,
+  LOS_CORRIDOR_PAD:  26,
+  MIN_DUEL_RANGE:   420,
+  VALIDATION_MAX_TRIES: 12
+};
+
+  // ===== МИР БОЛЬШЕ ЭКРАНА =====
+  let WORLD_W = Math.max(3000, window.innerWidth * 3);
+  let WORLD_H = Math.max(2000, window.innerHeight * 3);
+  function setWorldSize(){
+    WORLD_W = Math.max(3000, window.innerWidth * 3);
+    WORLD_H = Math.max(2000, window.innerHeight * 3);
+  }
+
+  // ===== КАМЕРА =====
+  class Camera {
+    constructor(){
+      this.x = WIDTH/2; this.y = HEIGHT/2;
+      this.tx = this.x; this.ty = this.y;
+      this.zoom = 1;
+      this.smooth = 8;
+    }
+    focus(x,y, instant=false){
+      this.tx = x; this.ty = y;
+      if (instant){ this.x = x; this.y = y; }
+    }
+    update(dt){
+      const k = Math.min(1, this.smooth * dt);
+      this.x += (this.tx - this.x) * k;
+      this.y += (this.ty - this.y) * k;
+      const halfW = (WIDTH / 2) / this.zoom;
+      const halfH = (HEIGHT / 2) / this.zoom;
+      this.x = Math.max(halfW, Math.min(WORLD_W - halfW, this.x));
+      this.y = Math.max(halfH, Math.min(WORLD_H - halfH, this.y));
+    }
+    apply(){
+      ctx.translate(WIDTH/2, HEIGHT/2);
+      ctx.scale(this.zoom, this.zoom);
+      ctx.translate(-this.x, -this.y);
+    }
+  }
+
+  // === ОРУЖИЕ/УТИЛИТЫ (Warheads-подобные) ===
+  const WEAPONS = [
+    { key: 'shell',   name: 'Снаряд',           ammo: Infinity },
+    { key: 'cluster', name: 'Кластерная бомба', ammo: 2 },
+    { key: 'homing',  name: 'Самонаводящаяся',  ammo: 2 },
+  ];
+  const UTILS = { shield:'Щит', teleport:'Телепорт' };
+
+  // === ВЕТЕР (как в Warheads) + подсказка
+  const WIND = { value: 0, target: 0, timer: 0 };
+  function pickNewWind(){ WIND.target = (Math.random()*2-1) * 40; WIND.timer = 8 + Math.random()*7; }
+  function updateWind(dt){ WIND.timer -= dt; if (WIND.timer <= 0){ pickNewWind(); } WIND.value += (WIND.target - WIND.value) * Math.min(1, dt * 0.6); }
+
+  const stage = document.getElementById('stage');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const hudElem = document.getElementById('hud');
+  const overlayElem = document.getElementById('overlay');
+  const overlayTextElem = document.getElementById('overlayText');
+  const angleValElem = document.getElementById('angleVal');
+  const powerValElem = document.getElementById('powerVal');
+  const menuElem = document.getElementById('menu');
+  const btnMenu = document.getElementById('btnMenu');
+  const btnFs = document.getElementById('btnFs');
+  const optFs = document.getElementById('optFs');
+  const optP2P = document.getElementById('optP2P');
+  const p2pBox = document.getElementById('p2pBox');
+  const btnHostCreate = document.getElementById('btnHostCreate');
+  const btnHostCopyOffer = document.getElementById('btnHostCopyOffer');
+  const btnHostSetAnswer = document.getElementById('btnHostSetAnswer');
+  const btnHostStartGame = document.getElementById('btnHostStartGame');
+  const hostOffer = document.getElementById('hostOffer');
+  const hostAnswer = document.getElementById('hostAnswer');
+  const btnClientConnect = document.getElementById('btnClientConnect');
+  const btnClientCopyAnswer = document.getElementById('btnClientCopyAnswer');
+  const clientOffer = document.getElementById('clientOffer');
+  const clientAnswer = document.getElementById('clientAnswer');
+  const netStatus = document.getElementById('netStatus');
+  const eventBanner = document.getElementById('eventBanner');
+
+  // Мини-карта
+  const minimap = document.getElementById('minimap');
+  const mctx = minimap.getContext('2d');
+
+  const dpr = () => (window.devicePixelRatio || 1);
+  function hexToRgb(hex){ return { r:parseInt(hex.slice(1,3),16), g:parseInt(hex.slice(3,5),16), b:parseInt(hex.slice(5,7),16) }; }
+  function rgbaStr({r,g,b}, a=1){ return `rgba(${r},${g},${b},${a})`; }
+  function hexToRgba(hex,a=1){ return rgbaStr(hexToRgb(hex), a); }
+  function mixHex(h1,h2,t){ const a=hexToRgb(h1), b=hexToRgb(h2); return rgbaStr({r:Math.round(a.r+(b.r-a.r)*t), g:Math.round(a.g+(b.g-a.g)*t), b:Math.round(a.b+(b.b-a.b)*t)}); }
+  function baseScale(){ return Math.min(WIDTH/1200, HEIGHT/800); }
+  let CURRENT_SCALE = 1;
+
+  function setupCanvasBackingStore() {
+    const ratio = dpr();
+    canvas.width = Math.floor(WIDTH * ratio);
+    canvas.height = Math.floor(HEIGHT * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    setupMinimapBackingStore();
+  }
+  function setupMinimapBackingStore(){
+    const ratio = dpr();
+    const cssW = minimap.clientWidth || 240;
+    const cssH = minimap.clientHeight || 150;
+    minimap.width = Math.floor(cssW * ratio);
+    minimap.height = Math.floor(cssH * ratio);
+    mctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+  function setSceneSize(){ WIDTH = window.innerWidth; HEIGHT = window.innerHeight; setupCanvasBackingStore(); setWorldSize(); }
+  window.addEventListener('resize', setSceneSize);
+  try { window.matchMedia(`(resolution: ${dpr()}dppx)`).addEventListener('change', setupCanvasBackingStore); } catch(e) {}
+
+  // =====================
+  // Классы мира (красивые планеты и пушки)
+  // =====================
+  class Planet {
+    constructor(x,y,r,color,opts={}) { this.x = x; this.y = y; this.radius = r; this.color = color; this.mass = r * r * 100; this.ring = !!opts.ring; this.ringTilt = opts.ringTilt || -0.5; }
+    draw() {
+      const s = CURRENT_SCALE;
+      if (this.ring) this.drawRing(true);
+      const lx = this.x - this.radius*0.7; // свет
+      const ly = this.y - this.radius*0.9;
+      const g = ctx.createRadialGradient(lx, ly, this.radius*0.2, this.x, this.y, this.radius*1.15);
+      g.addColorStop(0.0, mixHex(this.color, WHITE, 0.55));
+      g.addColorStop(0.65, this.color);
+      g.addColorStop(1.0, mixHex(this.color, BLACK, 0.45));
+      ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2); ctx.fillStyle = g; ctx.fill();
+      // ореол
+      ctx.save();
+      ctx.beginPath(); ctx.arc(this.x, this.y, this.radius+6*s, 0, Math.PI*2);
+      ctx.strokeStyle = hexToRgba(this.color, 0.25); ctx.lineWidth = 12*s; ctx.stroke();
+      ctx.restore();
+      // облачные полосы
+      ctx.save();
+      ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2); ctx.clip();
+      const bands = 5; const bh = (this.radius*2) / (bands*2);
+      for (let i=0;i<bands;i++) {
+        const y = this.y - this.radius + i*bh*2 + bh*0.5;
+        ctx.globalAlpha = 0.06;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(this.x - this.radius, y, this.radius*2, bh);
+      }
+      ctx.restore();
+      if (this.ring) this.drawRing(false);
+    }
+    drawRing(backHalf){
+      const s = CURRENT_SCALE; const rx = this.radius*1.9; const ry = this.radius*0.6;
+      ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.ringTilt);
+      ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, backHalf ? Math.PI : 0, backHalf ? 0 : Math.PI, true);
+      ctx.strokeStyle = hexToRgba(this.color, backHalf?0.25:0.4);
+      ctx.lineWidth = 6*s; ctx.stroke(); ctx.restore();
+    }
+    getGravityForce(x,y,mass) { let dx = this.x - x; let dy = this.y - y; let dist2 = dx*dx + dy*dy; if (dist2 < 1) dist2 = 1; let force = Math.min(G * this.mass * mass / (dist2), 10); let angle = Math.atan2(dy, dx); return { fx: force * Math.cos(angle), fy: force * Math.sin(angle) }; }
+  }
+
+  class Spacecraft {
+    constructor(x,y,color,playerId) {
+      const s = CURRENT_SCALE;
+      this.x = x; this.y = y; this.vx = 0; this.vy = 0; this.radius = 16 * s; this.color = color; this.playerId = playerId;
+      this.health = 100; this.fuel = 100; this.angle = Math.random() * Math.PI * 2; this.power = 50;
+      this.alive = true; this.moving = true;
+      this.movementTimer = 0; this.maxMovementTime = 5.0; this.justDied = false;
+      this.grounded = false; this.groundedPlanet = null;
+
+      // инвентарь/оружие/щит
+      this.inventory = { cluster: 2, homing: 2, shield: 1, teleport: 1 };
+      this.selected = 0;
+      this.shieldHp = 0;
+    }
+    selectedWeapon(){ return WEAPONS[this.selected]; }
+
+    applyGravity(planets, dt){
+      let totalFx=0, totalFy=0;
+      for (let p of planets){ const f = p.getGravityForce(this.x, this.y, 1); totalFx += f.fx; totalFy += f.fy; }
+      this.vx += totalFx * dt; this.vy += totalFy * dt;
+    }
+    handleGrounding(planets){
+      const s = CURRENT_SCALE;
+      const CAPTURE = 120 * s;   // радиус захвата
+      const LIFT = 1 * s;        // минимальный зазор над поверхностью
+      this.grounded = false; this.groundedPlanet = null;
+      let nearest = null, nd = 1e9;
+      for (let p of planets){
+        const dx = this.x - p.x, dy = this.y - p.y; const dist = Math.hypot(dx,dy);
+        const minDist = p.radius + this.radius;
+        const gap = dist - minDist;
+        if (dist < nd){ nd = dist; nearest = {p, dx, dy, dist, minDist, gap}; }
+        if (dist < minDist){
+          const ang = Math.atan2(dy, dx);
+          this.x = p.x + Math.cos(ang) * (minDist + LIFT);
+          this.y = p.y + Math.sin(ang) * (minDist + LIFT);
+          this.vx *= 0.2; this.vy *= 0.2;
+          this.grounded = true; this.groundedPlanet = p;
+        }
+      }
+      if (!nearest) return;
+
+      const {p, dx, dy, dist, minDist, gap} = nearest;
+      if (gap <= CAPTURE){
+        const ang = Math.atan2(dy, dx);
+        const tx = p.x + Math.cos(ang) * (minDist + LIFT);
+        const ty = p.y + Math.sin(ang) * (minDist + LIFT);
+        const t = Math.max(0, 1 - Math.min(1, gap / CAPTURE));
+        const snap = 0.6 * t;
+        this.x += (tx - this.x) * snap;
+        this.y += (ty - this.y) * snap;
+        const nx = Math.cos(ang), ny = Math.sin(ang);
+        const txu = -ny, tyu = nx;
+        const vn = this.vx*nx + this.vy*ny;
+        const vt = this.vx*txu + this.vy*tyu;
+        const normalDamp = 0.2 + 0.7*t;
+        const friction = 0.85;
+        this.vx = vn*nx*normalDamp + vt*txu*friction;
+        this.vy = vn*ny*normalDamp + vt*tyu*friction;
+        if (gap < 2*s){ this.grounded = true; this.groundedPlanet = p; }
+      }
+    }
+    update(planets, dt) {
+      if (!this.alive) return;
+      this.applyGravity(planets, dt);
+      const drag = 0.98;
+      this.vx *= drag; this.vy *= drag;
+      this.x += this.vx * dt; this.y += this.vy * dt;
+      this.handleGrounding(planets);
+      const margin = 200;
+      if (this.x < -margin) this.x = -margin;
+      if (this.x > WORLD_W+margin) this.x = WORLD_W+margin;
+      if (this.y < -margin) this.y = -margin;
+      if (this.y > WORLD_H+margin) this.y = WORLD_H+margin;
+    }
+    isMoving() { return (Math.abs(this.vx) + Math.abs(this.vy)) > 0.05; }
+    stopMoving() { this.vx*=0.5; this.vy*=0.5; }
+    draw() {
+      if (!this.alive) return;
+      const s = CURRENT_SCALE; const r = this.radius;
+      const grad = ctx.createRadialGradient(this.x - r*0.5, this.y - r*0.6, r*0.2, this.x, this.y, r);
+      grad.addColorStop(0, mixHex(this.color, WHITE, 0.6));
+      grad.addColorStop(1, mixHex(this.color, BLACK, 0.4));
+      ctx.beginPath(); ctx.arc(this.x, this.y, r, 0, Math.PI*2); ctx.fillStyle = grad; ctx.fill();
+
+      ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
+      const baseR = r*0.65;
+      ctx.beginPath(); ctx.ellipse(0, 0, baseR, baseR*0.75, 0, 0, Math.PI*2);
+      ctx.fillStyle = hexToRgba('#222', 0.6); ctx.fill();
+
+      const barrelLen = 28*s, barrelW = 7*s;
+      const gBar = ctx.createLinearGradient(0, 0, barrelLen, 0);
+      gBar.addColorStop(0.0, '#cfcfcf'); gBar.addColorStop(0.5, '#7f7f7f'); gBar.addColorStop(1.0, '#f0f0f0');
+      ctx.fillStyle = gBar;
+      ctx.beginPath();
+      const bw = barrelW/2;
+      ctx.moveTo(r*0.1, -bw); ctx.lineTo(r*0.1 + barrelLen, -bw); ctx.lineTo(r*0.1 + barrelLen, bw); ctx.lineTo(r*0.1, bw); ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      for (let i=1;i<=3;i++){ const x = r*0.1 + i*barrelLen/4; ctx.fillRect(x, -bw, 2*s, barrelW); }
+      ctx.beginPath(); ctx.arc(r*0.1 + barrelLen + 1*s, 0, bw*0.9, 0, Math.PI*2); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fill();
+      ctx.restore();
+
+      for (let i=0;i<3;i++){
+        const ang = -Math.PI/3 + i*(Math.PI/3);
+        const ix = this.x + Math.cos(ang) * r*0.65;
+        const iy = this.y + Math.sin(ang) * r*0.65;
+        ctx.beginPath(); ctx.arc(ix, iy, 2.8*s, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(180,240,255,0.85)'; ctx.fill();
+      }
+
+      let hw = 34*s, hh = 4*s; let hx = this.x - hw/2, hy = this.y - r - 8*s;
+      ctx.fillStyle = '#ff4d4d'; ctx.fillRect(hx, hy, hw, hh);
+      ctx.fillStyle = '#2ee52e'; ctx.fillRect(hx, hy, hw * (this.health/100), hh);
+
+      // кольцо щита
+      if (this.shieldHp > 0){
+        ctx.beginPath(); ctx.arc(this.x, this.y, r+6*s, 0, Math.PI*2);
+        ctx.strokeStyle = 'rgba(120,200,255,0.85)'; ctx.lineWidth = 3*s; ctx.stroke();
+      }
+    }
+
+    fireWeapon() {
+      if (!this.alive || this.fuel <= 0) return [];
+      const s = CURRENT_SCALE;
+      const px = this.x + Math.cos(this.angle) * (this.radius + 6*s);
+      const py = this.y + Math.sin(this.angle) * (this.radius + 6*s);
+      this.vx -= Math.cos(this.angle) * 10 * s;
+      this.vy -= Math.sin(this.angle) * 10 * s;
+
+      const w = this.selectedWeapon().key;
+      if (w === 'shell'){
+        this.fuel -= 5;
+        return [ new Projectile(px, py, Math.cos(this.angle)*this.power*2.4, Math.sin(this.angle)*this.power*2.4, this.playerId, {kind:'shell'}) ];
+      }
+      if (w === 'cluster' && this.inventory.cluster > 0){
+        this.fuel -= 6; this.inventory.cluster--;
+        return [ new Projectile(px, py, Math.cos(this.angle)*this.power*2.4, Math.sin(this.angle)*this.power*2.4, this.playerId, {kind:'clusterParent'}) ];
+      }
+      if (w === 'homing' && this.inventory.homing > 0){
+        this.fuel -= 7; this.inventory.homing--;
+        return [ new Projectile(px, py, Math.cos(this.angle)*this.power*2.2, Math.sin(this.angle)*this.power*2.2, this.playerId, {kind:'homing'}) ];
+      }
+      return [];
+    }
+  }
+
+  class Projectile {
+    constructor(x,y,vx,vy,ownerId,opts={}) {
+      const s = CURRENT_SCALE; this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.radius = 4 * s; this.ownerId = ownerId; this.color = opts.color || YELLOW; this.alive = true; this.trail = []; this.maxTrail = 10; this.lifetime = 0; this.maxLifetime = opts.maxLifetime || 12.0;
+      this.kind = opts.kind || 'shell';   // 'shell' | 'clusterParent' | 'homing' | 'meteor'
+      this.splitDone = false;
+    }
+    update(planets, spacecrafts, dt) {
+      if (!this.alive) return null;
+      this.lifetime += dt; if (this.lifetime > this.maxLifetime) { this.alive = false; return {type:'vanish'}; }
+      this.trail.push({x:this.x, y:this.y}); if (this.trail.length > this.maxTrail) this.trail.shift();
+
+      if (this.kind === 'homing'){
+        let best=null, bd=1e9;
+        for (const sc of spacecrafts){
+          if (!sc.alive || sc.playerId===this.ownerId) continue;
+          const d = Math.hypot(sc.x-this.x, sc.y-this.y);
+          if (d<bd){ bd=d; best=sc; }
+        }
+        if (best){
+          const desired = Math.atan2(best.y - this.y, best.x - this.x);
+          const cur = Math.atan2(this.vy, this.vx);
+          let da = desired - cur;
+          while (da>Math.PI) da-=2*Math.PI;
+          while (da<-Math.PI) da+=2*Math.PI;
+          const steer = Math.max(-0.9*dt, Math.min(0.9*dt, da*0.5*dt));
+          const speed = Math.hypot(this.vx, this.vy);
+          const newAng = cur + steer;
+          this.vx = Math.cos(newAng)*speed;
+          this.vy = Math.sin(newAng)*speed;
+        }
+      }
+
+      // Притяжение и ветер
+      let totalFx=0, totalFy=0;
+      for (let p of planets) { let f = p.getGravityForce(this.x, this.y, PROJECTILE_MASS); totalFx += f.fx; totalFy += f.fy; }
+      const windAx = WIND.value;
+      this.vx += (totalFx * PROJECTILE_GRAVITY_MULT + windAx) * dt;
+      this.vy += (totalFy * PROJECTILE_GRAVITY_MULT) * dt;
+      this.x += this.vx * dt; this.y += this.vy * dt;
+
+      // Столкновение с планетой — взрыв
+      for (let p of planets) { let dx = this.x - p.x, dy = this.y - p.y; let dist = Math.sqrt(dx*dx + dy*dy); if (dist < p.radius + this.radius) { this.alive = false; const pow=(this.kind==='homing'?1.3:(this.kind==='meteor'?0.9:1.2)); return {type:'explode', x:this.x, y:this.y, power:pow}; } }
+      // Прямое попадание по технике — урон больше
+      for (let sc of spacecrafts) { if (sc.alive && sc.playerId !== this.ownerId && this.ownerId!==-1) { let dx = this.x - sc.x, dy = this.y - sc.y; let dist = Math.sqrt(dx*dx + dy*dy); if (dist < sc.radius + this.radius) { sc.health -= (this.kind==='homing'?8:9); if (sc.health <= 0) { sc.alive = false; sc.justDied = true; } this.alive = false; const pow=(this.kind==='homing'?1.5:1.7); return {type:'explode', x:this.x, y:this.y, power:pow, direct:true, victim: sc}; } } }
+
+      // Расщепление кластерной бомбы
+      if (this.kind==='clusterParent' && !this.splitDone && this.lifetime>0.55){
+        this.splitDone = true;
+        const children=[];
+        const baseSpeed = Math.hypot(this.vx,this.vy);
+        for (let i=0;i<5;i++){
+          const ang = Math.atan2(this.vy,this.vx) + (Math.random()*0.7 - 0.35);
+          const sp = baseSpeed*(0.75+Math.random()*0.2);
+          children.push({vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp});
+        }
+        return {type:'split', x:this.x, y:this.y, children};
+      }
+
+      if (this.x < -300 || this.x > WORLD_W+300 || this.y < -300 || this.y > WORLD_H+300) { this.alive = false; return {type:'vanish'}; }
+      return null;
+    }
+    isActive() { return this.alive; }
+    draw() {
+      if (!this.alive) return;
+      for (let i=0; i<this.trail.length; i++) { const t = this.trail[i]; const alpha = (i+1)/this.trail.length; const rad = Math.max(1, this.radius * alpha); ctx.beginPath(); ctx.arc(t.x, t.y, rad, 0, Math.PI*2); ctx.fillStyle = `rgba(255, 255, 120, ${0.2*alpha})`; ctx.fill(); }
+      ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2); ctx.fillStyle = this.color; ctx.fill();
+    }
+  }
+
+  class Explosion {
+    constructor(x, y, power=1) { const s = CURRENT_SCALE; this.x = x; this.y = y; this.time = 0; this.duration = 0.9 + power*0.35; this.ringR = 0; this.ringMaxR = 60 * power * s; const count = Math.floor(50 * power); this.particles = []; for (let i=0;i<count;i++) { const a = Math.random()*Math.PI*2; const sp = (80 + Math.random()*180) * power * s; this.particles.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 0, lifeMax: 0.4 + Math.random()*0.9, size: (1 + Math.random()*3*power) * s, color: [YELLOW, ORANGE, RED, WHITE][Math.floor(Math.random()*4)] }); } }
+    update(dt) { this.time += dt; this.ringR += 450 * dt * CURRENT_SCALE; for (let p of this.particles) { p.life += dt; p.vx *= 0.98; p.vy *= 0.98; p.x += p.vx * dt; p.y += p.vy * dt; } }
+    isAlive() { if (this.time < this.duration) return true; return this.particles.some(p => p.life < p.lifeMax); }
+    draw() { ctx.save(); ctx.globalCompositeOperation = 'lighter'; for (let p of this.particles) { const t = Math.min(1, p.life/p.lifeMax); if (t >= 1) continue; const alpha = 1 - t; const size = p.size * (1.2 - 0.8*t); ctx.beginPath(); ctx.arc(p.x, p.y, size, 0, Math.PI*2); ctx.fillStyle = hexToRgba(p.color, 0.85*alpha); ctx.fill(); } if (this.time < this.duration*0.7) { const a = 0.6 * (1 - this.time/(this.duration*0.7)); ctx.beginPath(); ctx.arc(this.x, this.y, this.ringR, 0, Math.PI*2); ctx.strokeStyle = `rgba(255,255,255,${a})`; ctx.lineWidth = 3 * CURRENT_SCALE; ctx.stroke(); } ctx.restore(); }
+  }
+
+  // Ящик с припасами
+  class Crate{
+    constructor(x,y,type){ this.x=x; this.y=y; this.type=type; this.alive=true; }
+    draw(){
+      ctx.save();
+      ctx.translate(this.x,this.y);
+      ctx.fillStyle='rgba(60,80,40,0.95)';
+      ctx.fillRect(-6,-6,12,12);
+      ctx.strokeStyle='rgba(255,255,255,0.7)';
+      ctx.lineWidth=1; ctx.strokeRect(-6,-6,12,12);
+      ctx.fillStyle='#ffd37a'; ctx.fillRect(-2,-6,4,12);
+      ctx.restore();
+    }
+  }
+
+  // =====================
+  // Игра
+  // =====================
+  // =====================
+  // P2P Online (WebRTC, DataChannel) — без сервера, копипастой оффера/ответа
+  // =====================
+  class NetRTC{
+    constructor(){
+      this.pc=null; this.dc=null; this.role=null; this.game=null; this.connected=false;
+      this.iceServers=[{urls:'stun:stun.l.google.com:19302'}];
+    }
+    attach(game){ this.game=game; }
+    _mk(){ this.pc = new RTCPeerConnection({iceServers:this.iceServers});
+      this.pc.oniceconnectionstatechange = ()=>{ netStatus.textContent = 'Статус: '+this.pc.iceConnectionState; };
+      this.pc.onicecandidate = ()=>{ /* оффер/ответ обновятся автоматически в textareas */ };
+      if (this.role==='client'){
+        this.pc.ondatachannel = (e)=>{ this.dc = e.channel; this._wireDC(); };
+      }
+    }
+    _wireDC(){ if (!this.dc) return; this.dc.onopen=()=>{ this.connected=true; netStatus.textContent='Статус: онлайн (канал открыт)'; };
+      this.dc.onclose=()=>{ this.connected=false; netStatus.textContent='Статус: канал закрыт'; };
+      this.dc.onmessage=(ev)=>{ try{ const m=JSON.parse(ev.data); this.onMessage(m); }catch(e){} };
+    }
+    onMessage(msg){ if (!this.game) return;
+      if (msg.t==='action' && this.role==='host'){ this.game.applyNetAction(msg.action, true); }
+      else if (msg.t==='state' && this.role==='client'){ this.game.applyState(msg.state); }
+      else if (msg.t==='start' && this.role==='client'){ /* опционально синхронизация сида */ }
+    }
+    send(o){ if (this.dc && this.dc.readyState==='open') this.dc.send(JSON.stringify(o)); }
+    broadcastAction(action){ this.send({t:'action', action}); }
+    sendState(state){ this.send({t:'state', state}); }
+
+    // ==== Хост ====
+    async createHost(){ this.role='host'; this._mk(); this.dc = this.pc.createDataChannel('game'); this._wireDC();
+      const offer = await this.pc.createOffer(); await this.pc.setLocalDescription(offer);
+      return btoa(unescape(encodeURIComponent(JSON.stringify(this.pc.localDescription))));
+    }
+    async acceptAnswerFromBase64(b64){ const json = JSON.parse(decodeURIComponent(escape(atob(b64)))); await this.pc.setRemoteDescription(json); }
+
+    // ==== Клиент ====
+    async connectClientFromBase64(b64){ this.role='client'; this._mk(); const offer = JSON.parse(decodeURIComponent(escape(atob(b64)))); await this.pc.setRemoteDescription(offer); const answer = await this.pc.createAnswer(); await this.pc.setLocalDescription(answer); return btoa(unescape(encodeURIComponent(JSON.stringify(this.pc.localDescription)))); }
+  }
+
+  class Game {
+    drawPrediction(sc){
+      const s = CURRENT_SCALE;
+      let x = sc.x + Math.cos(sc.angle) * (sc.radius + 6*s);
+      let y = sc.y + Math.sin(sc.angle) * (sc.radius + 6*s);
+      let vx = Math.cos(sc.angle) * sc.power * 2.4;
+      let vy = Math.sin(sc.angle) * sc.power * 2.4;
+      const dt = 0.06;
+      ctx.save(); ctx.globalAlpha = 0.5; ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      for (let i=0;i<24;i++){
+        let fx=0, fy=0; for (const p of this.planets){ const f = p.getGravityForce(x,y,PROJECTILE_MASS); fx+=f.fx; fy+=f.fy; }
+        const ax = fx * PROJECTILE_GRAVITY_MULT + WIND.value;
+        const ay = fy * PROJECTILE_GRAVITY_MULT;
+        vx += ax * dt; vy += ay * dt; x += vx * dt; y += vy * dt;
+        let hit=false; for (const p of this.planets){ const dx=x-p.x, dy=y-p.y; if (Math.hypot(dx,dy) < p.radius + 3*s){ hit=true; break; } }
+        if (hit) break;
+        ctx.beginPath(); ctx.arc(x, y, 2*s, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.restore();
+    }
+    constructor(playerCount=2, net=null) {
+      this.planets = []; this.spacecrafts = []; this.projectiles = []; this.effects = [];
+      this.stars = [];
+      this.crates = [];
+      this.camera = new Camera();
+      this.currentPlayer = 0; this.gameOver = false; this.winner = null; this.turnActive = false; this.turnTimer = 0; this.maxTurnTime = 15.0; this.shake = { baseAmp: 0, time: 0, decay: 2.2 }; this.scale = 1; this.t = 0;
+
+      // Новые поля
+      this.prepMaxTime = PREP_MAX_TIME; // на прицеливание
+      this.prepTimer = this.prepMaxTime;
+      this.turnCount = 0;
+      this.meteorTurnsLeft = 4 + ((Math.random()*5)|0); // 4–8 ходов // 2–4 хода
+
+      this.eventBannerT = 0; // анимация баннера
+
+      this.net = net; this.init(playerCount); this.bindHandlers();
+    }
+    randomPlanets(){
+      const s = this.scale;
+      const count = 5;
+      const planets = [];
+      const maxTries = 500;
+      for (let i=0;i<count;i++){
+        let tries = 0;
+        let placed = false;
+        while(!placed && tries < maxTries){
+          tries++;
+          const r = (40 + Math.random()*60) * s; // 40..100 * s
+          const x = r + Math.random()*(WORLD_W - 2*r);
+          const y = r + Math.random()*(WORLD_H - 2*r);
+          let ok = true;
+          for (const p of planets){
+            const dx = x - p.x, dy = y - p.y; const dist = Math.hypot(dx,dy);
+            if (dist < (r + p.radius + GEN.PLANET_MIN_GAP * s)) { ok = false; break; }
+          }
+          if (ok){
+            const color = COLORS[Math.floor(Math.random()*COLORS.length)];
+            const ring = Math.random() < 0.25;
+            planets.push(new Planet(x,y,r,color,{ring, ringTilt: (Math.random()*0.6-0.3)}));
+            placed = true;
+          }
+        }
+      }
+      return planets;
+    }
+    placeSpacecrafts(playerCount){
+      const s = this.scale;
+      const crafts = [];
+      const MIN_SEP = GEN.SHIP_MIN_SEP * s;
+      const SAME_PLANET_ANG_MIN = GEN.SAME_PLANET_ANG_MIN;
+      const occupancy = new Map();
+	  const forbidSharing = (this.planets.length >= playerCount);
+
+      const segmentIntersectsCircle = (x1,y1,x2,y2,cx,cy,r)=>{
+        const vx = x2-x1, vy=y2-y1;
+        const wx = cx-x1, wy=cy-y1;
+        const vv = vx*vx+vy*vy || 1e-6;
+        let t = (vx*wx+vy*wy)/vv; t = Math.max(0, Math.min(1,t));
+        const px = x1 + t*vx, py = y1 + t*vy;
+        const dx = px-cx, dy = py-cy; return (dx*dx+dy*dy) <= r*r;
+      };
+      const lineOfSightClear = (ax,ay,bx,by,margin=GEN.LOS_CORRIDOR_PAD*s)=>{
+        for (const p of this.planets){ if (segmentIntersectsCircle(ax,ay,bx,by,p.x,p.y,p.radius + margin)) return false; }
+        return true;
+      };
+      const farEnoughFromOthers = (x,y)=>{
+        for (const o of crafts){ if (Math.hypot(x-o.x,y-o.y) < MIN_SEP) return false; }
+        return true;
+      };
+
+      const maxTriesAll = 600;
+      for (let triesAll=0; triesAll<maxTriesAll; triesAll++){
+        crafts.length = 0; occupancy.clear();
+
+        for (let i=0;i<playerCount;i++){
+          let placed = false;
+          for (let tries=0; tries<400 && !placed; tries++){
+            const planetsSorted = [...this.planets].sort((a,b)=> (occupancy.get(a)?.length||0) - (occupancy.get(b)?.length||0));
+            const p = planetsSorted[(Math.random()*planetsSorted.length)|0];
+			if (forbidSharing && (occupancy.get(p)?.length || 0) > 0) { 
+			  continue; // ищем незанятую планету
+			}
+            const ang = Math.random()*Math.PI*2;
+            const r = p.radius + GEN.SHIP_ALT_MIN*s + Math.random()*GEN.SHIP_ALT_RAND*s + 26*s;
+            const x = p.x + Math.cos(ang)*r; const y = p.y + Math.sin(ang)*r;
+
+            if (!farEnoughFromOthers(x,y)) continue;
+
+            const occ = occupancy.get(p) || [];
+            let okAng = true; for (const o of occ){
+              let da = Math.abs(ang - o.ang); da = Math.min(da, Math.PI*2 - da);
+              if (da < SAME_PLANET_ANG_MIN) { okAng = false; break; }
+            }
+            if (!okAng) continue;
+
+            if (crafts.length>0){
+              let hasLos = false; for (const other of crafts){ 
+			  if (Math.hypot(x - other.x, y - other.y) < GEN.MIN_DUEL_RANGE * s) continue;
+			  if (lineOfSightClear(x,y,other.x,other.y, GEN.LOS_CORRIDOR_PAD*s)) { hasLos = true; break; }
+			  }
+              if (!hasLos) continue;
+            }
+
+            const color = COLORS[i % COLORS.length];
+            const sc = new Spacecraft(x,y,color,i);
+            const tangent = ang + Math.PI/2;
+            sc.vx = Math.cos(tangent) * (10 + Math.random()*20) * s;
+            sc.vy = Math.sin(tangent) * (10 + Math.random()*20) * s;
+            if (crafts.length>0){ let best=null, bd=1e9; for (const o of crafts){ const d=Math.hypot(o.x-x,o.y-y); if (d<bd){bd=d; best=o;} } sc.angle = Math.atan2((best?.y??y)-y, (best?.x??x)-x); }
+
+            crafts.push(sc);
+            occ.push({ang, r}); occupancy.set(p, occ);
+            placed = true;
+          }
+          if (!placed) break;
+        }
+        if (crafts.length === playerCount){
+          let allHaveTarget = true;
+          for (const a of crafts){ let has=false; for (const b of crafts){ if (a!==b && lineOfSightClear(a.x,a.y,b.x,b.y,18*s)) { has=true; break; } } if (!has){ allHaveTarget=false; break; } }
+          if (allHaveTarget) return crafts;
+        }
+      }
+
+      for (let i=0;i<playerCount;i++){
+        const p = this.planets[(Math.random()*this.planets.length)|0];
+        let ang = Math.random()*Math.PI*2; const baseR = p.radius + 26*s + Math.random()*40*s; let x, y; let ok=false;
+        for (let k=0;k<360;k++){
+          x = p.x + Math.cos(ang)*baseR; y = p.y + Math.sin(ang)*baseR;
+          if (farEnoughFromOthers(x,y)) { ok=true; break; }
+          ang += Math.PI/180;
+        }
+        if (!ok){ x = p.x + Math.cos(ang)*baseR; y = p.y + Math.sin(ang)*baseR; }
+        const color = COLORS[i % COLORS.length]; const sc = new Spacecraft(x,y,color,i);
+        const tangent = ang + Math.PI/2; sc.vx = Math.cos(tangent) * (10 + Math.random()*20) * s; sc.vy = Math.sin(tangent) * (10 + Math.random()*20) * s;
+        crafts.push(sc);
+      }
+      return crafts;
+    }
+    init(playerCount) {
+      this.scale = baseScale(); CURRENT_SCALE = this.scale;
+
+      // Звёзды (мир)
+      const total = Math.max(120, Math.round(120 * this.scale * (WIDTH*HEIGHT)/(1200*800)));
+      const farCnt = Math.round(total*0.5), midCnt = Math.round(total*0.35), nearCnt = total - farCnt - midCnt;
+      const mkStar = (layer) => ({
+        x: Math.random()*WORLD_W,
+        y: Math.random()*WORLD_H,
+        r: (Math.random()*1.5 + 0.5) * this.scale * (layer===3?1.3:layer===2?1.0:0.8),
+        b: Math.floor(Math.random()*105 + 150),
+        layer,
+        speed: (layer===1?3:layer===2?6:12) * this.scale,
+        vx: 0, vy: 0,
+        phase: Math.random()*Math.PI*2,
+        tw: 0.7 + Math.random()*0.8
+      });
+      this.stars = [];
+      for (let i=0;i<farCnt;i++) this.stars.push(mkStar(1));
+      for (let i=0;i<midCnt;i++) this.stars.push(mkStar(2));
+      for (let i=0;i<nearCnt;i++) this.stars.push(mkStar(3));
+      for (let s of this.stars){ s.vx = -s.speed * (0.6 + Math.random()*0.4); s.vy = -s.speed * (0.10 + Math.random()*0.05); }
+
+      this.scale = baseScale(); CURRENT_SCALE = this.scale;
+
+// === Подбор «валидной» карты: у каждого игрока должен быть рабочий выстрел ===
+let tries = 0;
+while (true){
+  tries++;
+  this.planets = this.randomPlanets();
+  this.spacecrafts = this.placeSpacecrafts(playerCount);
+
+  // соберем список врагов для каждого живого
+  let allOk = true;
+  const alive = this.spacecrafts.filter(s=>s.alive);
+  for (const sc of alive){
+    const enemies = alive.filter(e=>e!==sc);
+    if (!enemies.length) continue;
+    const shot = this.findShotFrom(sc, enemies);
+    if (!shot){ allOk = false; break; }
+    sc.angle = shot.angle;
+    sc.power = shot.power;
+  }
+
+   if (allOk || tries > GEN.VALIDATION_MAX_TRIES) break; // защита от вечного цикла
+}
+
+      this.projectiles = []; this.effects = []; this.crates = [];
+      this.currentPlayer = 0; this.gameOver = false; this.winner = null; this.turnActive = false; this.turnTimer = 0; this.shake = { baseAmp: 0, time: 0, decay: 2.2 }; this.t = 0;
+      this.prepTimer = this.prepMaxTime; this.turnCount = 0; this.meteorTurnsLeft = 4 + ((Math.random()*5)|0); // 4–8 ходов
+      const sc0 = this.spacecrafts[this.currentPlayer]; if (sc0) this.camera.focus(sc0.x, sc0.y, true);
+      this.updateHUD(); overlayElem.style.display = 'none'; this.info(`Игра начата — ход: Игрок ${this.currentPlayer+1}`); pickNewWind();
+      if (this.net && this.net.role==='host'){
+        const seed = Math.random().toString(36).slice(2);
+        this._lastSeed = seed;
+        this.net.send({t:'start', seed, playerCount});
+      }
+    }
+    bindHandlers() {
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'm' || e.key === 'M') { openMenu(); return; }
+        if (this.gameOver) { if (e.key === 'r' || e.key==='R') { this.init(this.spacecrafts.length); } return; }
+        const sc = this.getCurrentSpacecraft();
+        if (!this.turnActive) {
+          if (!sc) { this.nextTurn(); return; }
+
+          const angleStep = (e.shiftKey ? 0.02 : 0.10);
+          const powerStep = (e.altKey ? 1 : 5);
+
+          let action = null;
+          if (e.key === '1' || e.key === '2' || e.key === '3') {
+            const idx = parseInt(e.key,10)-1; action = {type:'SELECT_WEAPON', idx};
+          } else if (e.key.toLowerCase() === 'q' || e.key === 'й' || e.key === 'Й') {
+            action = {type:'CYCLE_WEAPON'};
+          } else if (e.key.toLowerCase() === 'e' || e.key === 'е' || e.key === 'Е') {
+            action = {type:'USE_SHIELD'};
+          } else if (e.key.toLowerCase() === 't' || e.key === 'т' || e.key === 'Т') {
+            action = {type:'TELEPORT'};
+          } else if (e.key === 'ArrowLeft') { action = {type:'SET_AIM', dAngle:-angleStep}; }
+          else if (e.key === 'ArrowRight') { action = {type:'SET_AIM', dAngle:angleStep}; }
+          else if (e.key === 'ArrowUp') { action = {type:'SET_POWER', dPower:powerStep}; }
+          else if (e.key === 'ArrowDown') { action = {type:'SET_POWER', dPower:-powerStep}; }
+          else if (e.key === ' ') { action = {type:'FIRE'}; }
+          else if (e.key === 'Enter') { action = {type:'END_TURN'}; }
+
+          if (action){ this.applyNetAction(action); }
+        } else { if (e.key === 'Escape') { this.forceEndTurn(); } }
+        this.updateHUD();
+      });
+    }
+    addShake(power) { this.shake.baseAmp = Math.max(this.shake.baseAmp, 6 * power * CURRENT_SCALE); this.shake.time = 0; }
+    getCurrentSpacecraft() { if (this.gameOver) return null; if (this.currentPlayer < 0 || this.currentPlayer >= this.spacecrafts.length) return null; const sc = this.spacecrafts[this.currentPlayer]; return (sc.alive ? sc : null); }
+    forceEndTurn() { for (let sc of this.spacecrafts) sc.stopMoving(); this.projectiles = []; this.turnActive = false; this.turnTimer = 0; }
+    nextTurn() {
+      if (this.gameOver) return;
+
+      // событие: шанс ящика
+      if (Math.random() < 0.4) this.spawnCrate();
+
+      // событие: счетчик метеоритов раз по ходам
+      this.meteorTurnsLeft -= 1;
+      if (this.meteorTurnsLeft <= 0) {
+        this.spawnMeteorShower();
+        this.meteorTurnsLeft = 4 + ((Math.random()*5)|0); // 4–8 ходов // сброс 2–4 хода
+      }
+
+      let checked = 0; const maxP = this.spacecrafts.length;
+      while (checked < maxP) {
+        this.currentPlayer = (this.currentPlayer + 1) % maxP; checked++;
+        if (this.spacecrafts[this.currentPlayer].alive) {
+          this.turnActive = false; this.turnTimer = 0; this.prepTimer = this.prepMaxTime; this.turnCount++;
+          this.updateHUD(); this.info(`Ход: Игрок ${this.currentPlayer+1}`);
+          const sc = this.getCurrentSpacecraft(); if (sc) this.camera.focus(sc.x, sc.y);
+		  if (sc){
+			const enemies = this.spacecrafts.filter(e=>e.alive && e!==sc);
+			const shot = this.findShotFrom(sc, enemies);
+			if (shot){ sc.angle = shot.angle; sc.power = shot.power; }
+		  }
+          return;
+        }
+      }
+      this.gameOver = true; this.turnActive = false; this.turnTimer = 0; this.checkWinCondition();
+    }
+    updateHUD() {
+      const sc = this.getCurrentSpacecraft();
+      let hud = `Игрок: ${this.currentPlayer+1}  `;
+      if (sc){
+        const w = WEAPONS[sc.selected];
+        hud += `Оружие: ${w.name} (Кл:${sc.inventory.cluster}  Сам:${sc.inventory.homing}  Щит:${sc.inventory.shield}  Тп:${sc.inventory.teleport})  `;
+        hud += `Мощность: ${sc.power}  Угол: ${(sc.angle*180/Math.PI).toFixed(1)}°  Топливо: ${sc.fuel}  Здоровье: ${sc.health}`;
+        hud += `  · Прицеливание: ${Math.max(0, Math.ceil(this.prepTimer))}с`;
+      }
+      hudElem.textContent = hud;
+      angleValElem.textContent = (sc ? (sc.angle*180/Math.PI).toFixed(1) : '—');
+      powerValElem.textContent = (sc ? sc.power : '—');
+    }
+    info(text) { overlayTextElem.textContent = text; overlayElem.style.display = 'flex'; setTimeout(() => { if (!this.gameOver && overlayElem.style.display === 'flex') overlayElem.style.display = 'none'; }, 2000); }
+    checkWinCondition() { const alive = this.spacecrafts.filter(sc => sc.alive); if (alive.length <= 1) { this.gameOver = true; if (alive.length === 1) { this.winner = alive[0].playerId; this.info(`Игрок ${this.winner+1} победил! Нажмите R для перезапуска или M для меню`); } else { this.info(`Ничья! Нажмите R для перезапуска или M для меню`); } } }
+
+    applyAoeDamage(x,y,power){
+      const s = CURRENT_SCALE; const maxR = 65 * power * s;
+      for (let sc of this.spacecrafts){ if (!sc.alive) continue; const dx = sc.x - x; const dy = sc.y - y; const dist = Math.hypot(dx,dy); if (dist < maxR){
+          const t = Math.max(0, 1 - dist / maxR);
+          let dmg = Math.round((35/3) * power * (0.5 + 0.5*t));
+          if (sc.shieldHp > 0){ const take = Math.min(sc.shieldHp, dmg); sc.shieldHp -= take; dmg -= take; }
+          sc.health -= dmg; if (sc.health <= 0){ sc.health = 0; sc.alive = false; sc.justDied = true; }
+          const dirx = (dist>1? dx/dist : 1), diry = (dist>1? dy/dist : 0);
+          const knock = (220 * power * (0.3 + 0.7*t)) * s;
+          sc.vx += dirx * knock; sc.vy += diry * knock;
+          if (sc.grounded && sc.groundedPlanet){
+            const p = sc.groundedPlanet; const nx = (sc.x - p.x); const ny = (sc.y - p.y); const nd = Math.hypot(nx,ny) || 1; const lift = 8 * s;
+            sc.x = p.x + nx/nd * (p.radius + sc.radius + lift);
+            sc.y = p.y + ny/nd * (p.radius + sc.radius + lift);
+            sc.grounded = false; sc.groundedPlanet = null;
+          }
+        } }
+    }
+
+    spawnCrate(){
+      const types=['cluster','homing','shield','teleport'];
+      for (let k=0;k<60;k++){
+        const x = 60 + Math.random()*(WORLD_W-120);
+        const y = 60 + Math.random()*(WORLD_H-120);
+        let ok = true; for (const p of this.planets){ if (Math.hypot(x-p.x,y-p.y) < p.radius+24){ ok=false; break; } }
+        if (ok){ const type=types[(Math.random()*types.length)|0]; this.crates.push(new Crate(x,y,type)); return; }
+      }
+    }
+
+    // Новое: событие «метеоритный дождь»
+    spawnMeteorShower(){
+      const n = 6 + ((Math.random()*7)|0); // 6–12
+      const fromTop = Math.random() < 0.5;
+      for (let i=0;i<n;i++){
+        const s = CURRENT_SCALE;
+        const x = fromTop ? (40 + Math.random()*(WORLD_W-80)) : ((Math.random()<0.5?-120:WORLD_W+120));
+        const y = fromTop ? -120 : (40 + Math.random()*(WORLD_H-80));
+        const vx = fromTop ? (Math.random()*120 - 60) : (x<0? (160+Math.random()*120) : -(160+Math.random()*120));
+        const vy = fromTop ? (180 + Math.random()*140) : (Math.random()*120 - 60);
+        const pr = new Projectile(x, y, vx*s, vy*s, -1, { kind:'meteor', color: ORANGE, maxLifetime: 10.0 });
+        pr.radius = 5*s;
+        this.projectiles.push(pr);
+      }
+      // баннер
+      eventBanner.style.display = 'block';
+      this.eventBannerT = 1.6; // сек
+    }
+
+    update(dt) {
+      if (this.gameOver) return;
+      updateWind(dt);
+      this.t += dt;
+
+      // Баннер события
+      if (this.eventBannerT > 0){ this.eventBannerT -= dt; if (this.eventBannerT <= 0) eventBanner.style.display = 'none'; }
+
+      if (this.turnActive) { this.turnTimer += dt; if (this.turnTimer >= this.maxTurnTime) this.forceEndTurn(); }
+
+      // Ограничение времени на прицеливание: автоспуск
+      if (!this.turnActive) {
+        this.prepTimer -= dt; if (this.prepTimer <= 0) {
+          const sc = this.getCurrentSpacecraft();
+          if (sc){
+            const orig = sc.power; sc.power = Math.max(10, Math.round(orig * 0.6));
+            const projs = sc.fireWeapon();
+            sc.power = orig; // откат
+            if (projs.length) {
+              for (const p of projs) this.projectiles.push(p);
+              const mx = sc.x + Math.cos(sc.angle) * (sc.radius + 6*CURRENT_SCALE);
+              const my = sc.y + Math.sin(sc.angle) * (sc.radius + 6*CURRENT_SCALE);
+              this.effects.push(new Explosion(mx, my, 0.45)); this.addShake(0.35);
+              this.turnActive = true; this.turnTimer = 0;
+              this.info('Время вышло — автовыстрел');
+            } else {
+              this.nextTurn();
+            }
+          }
+        }
+      }
+
+      // Снаряды
+      const toRemove = [];
+      let endTurnSoon = false;
+      for (let i=0; i<this.projectiles.length; i++) {
+        const proj = this.projectiles[i];
+        const ev = proj.update(this.planets, this.spacecrafts, dt);
+        if (ev) {
+          if (ev.type === 'explode') {
+            this.effects.push(new Explosion(ev.x, ev.y, ev.power));
+            this.addShake(ev.power);
+            this.applyAoeDamage(ev.x, ev.y, ev.power);
+            endTurnSoon = true;
+          } else if (ev.type === 'vanish') {
+            endTurnSoon = true;
+          } else if (ev.type === 'split') {
+            for (const c of ev.children){
+              this.projectiles.push(new Projectile(ev.x, ev.y, c.vx, c.vy, proj.ownerId, {kind:'shell'}));
+            }
+          }
+          toRemove.push(i);
+        }
+      }
+      toRemove.sort((a,b)=>b-a); toRemove.forEach(idx => this.projectiles.splice(idx,1));
+      if (endTurnSoon) { this.turnActive = false; this.turnTimer = 0; this.projectiles = []; this.nextTurn(); }
+
+      // Корабли
+      this.spacecrafts.forEach(sc => { sc.update(this.planets, dt); if (sc.justDied) { this.effects.push(new Explosion(sc.x, sc.y, 2.2)); this.addShake(2.0); sc.justDied = false; } });
+
+      // Ящики: подбор
+      for (const crate of this.crates){
+        if (!crate.alive) continue;
+        for (const sc of this.spacecrafts){
+          if (!sc.alive) continue;
+          if (Math.hypot(sc.x-crate.x, sc.y-crate.y) < sc.radius+14){
+            crate.alive=false;
+            if (crate.type==='cluster') sc.inventory.cluster++;
+            else if (crate.type==='homing') sc.inventory.homing++;
+            else if (crate.type==='shield') sc.inventory.shield++;
+            else if (crate.type==='teleport') sc.inventory.teleport++;
+            this.info('Подобран: ' + crate.type);
+            break;
+          }
+        }
+      }
+      this.crates = this.crates.filter(c=>c.alive);
+
+      // Эффекты
+      this.effects.forEach(e => e.update(dt)); this.effects = this.effects.filter(e => e.isAlive());
+
+      if (this.net && this.net.role==='host' && this.net.connected){
+        this._stateSendTimer = (this._stateSendTimer||0) + dt;
+        if (this._stateSendTimer > 0.1){ this._stateSendTimer = 0; this.net.sendState(this.exportState()); }
+      }
+
+      // Звёзды
+      const margin = 8;
+      for (let s of this.stars){
+        s.x += s.vx * dt; s.y += s.vy * dt;
+        if (s.x < -margin) s.x = WORLD_W + margin;
+        if (s.x > WORLD_W + margin) s.x = -margin;
+        if (s.y < -margin) s.y = WORLD_H + margin;
+        if (s.y > WORLD_H + margin) s.y = -margin;
+      }
+
+      // Камера
+      let camTarget = null;
+      if (this.turnActive && this.projectiles.length){
+        camTarget = this.projectiles[this.projectiles.length-1];
+      } else {
+        camTarget = this.getCurrentSpacecraft();
+      }
+      if (camTarget) this.camera.focus(camTarget.x, camTarget.y);
+      this.camera.update(dt);
+
+      // Шейк затухает
+      this.shake.time += dt; if (this.shake.baseAmp > 0 && Math.exp(-this.shake.decay * this.shake.time) < 0.02) { this.shake.baseAmp = 0; }
+
+      if (this.turnActive) {
+        let moving = false;
+        for (let p of this.projectiles) if (p.isActive()) { moving=true; break; }
+        if (!moving) { for (let sc of this.spacecrafts) if (sc.isMoving()) { moving=true; break; } }
+        if (!moving) { this.turnActive = false; this.turnTimer = 0; this.nextTurn(); }
+      }
+      this.checkWinCondition(); this.updateHUD();
+    }
+
+    drawMinimap(){
+      const w = minimap.clientWidth || 240;
+      const h = minimap.clientHeight || 150;
+      mctx.clearRect(0,0,w,h);
+
+      // фон
+      mctx.fillStyle = 'rgba(10,20,28,0.9)'; mctx.fillRect(0,0,w,h);
+      // рамка
+      mctx.strokeStyle = 'rgba(255,255,255,0.18)'; mctx.lineWidth = 1; mctx.strokeRect(0.5,0.5,w-1,h-1);
+
+      const sx = w / WORLD_W;
+      const sy = h / WORLD_H;
+      const s = Math.min(sx, sy);
+
+      // планеты
+      for (const p of this.planets){
+        mctx.beginPath();
+        mctx.arc(p.x*s, p.y*s, Math.max(1, p.radius*s), 0, Math.PI*2);
+        mctx.fillStyle = 'rgba(120,160,200,0.65)';
+        mctx.fill();
+      }
+
+      // корабли
+      for (const sc of this.spacecrafts){
+        if (!sc.alive) continue;
+        mctx.beginPath();
+        mctx.arc(sc.x*s, sc.y*s, 3, 0, Math.PI*2);
+        mctx.fillStyle = sc.color;
+        mctx.fill();
+        if (sc === this.getCurrentSpacecraft()){
+          mctx.beginPath();
+          mctx.arc(sc.x*s, sc.y*s, 5, 0, Math.PI*2);
+          mctx.strokeStyle = 'rgba(255,255,255,0.7)';
+          mctx.lineWidth = 1;
+          mctx.stroke();
+        }
+      }
+
+      // снаряд(ы)
+      for (const pr of this.projectiles){
+        if (!pr.alive) continue;
+        mctx.fillStyle = '#ffe066';
+        mctx.fillRect(pr.x*s-2, pr.y*s-2, 4, 4);
+      }
+
+      // прямоугольник текущего экрана (камера)
+      const viewW = (WIDTH / this.camera.zoom) * s;
+      const viewH = (HEIGHT / this.camera.zoom) * s;
+      const vx = this.camera.x * s - viewW/2;
+      const vy = this.camera.y * s - viewH/2;
+      mctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      mctx.lineWidth = 1.5;
+      mctx.strokeRect(vx, vy, viewW, viewH);
+    }
+
+    draw() {
+      const decayAmp = this.shake.baseAmp * Math.exp(-this.shake.decay * this.shake.time); const offX = (Math.random()*2-1) * decayAmp; const offY = (Math.random()*2-1) * decayAmp;
+      ctx.save(); ctx.translate(offX, offY); ctx.fillStyle = BLACK; ctx.fillRect(0,0,WIDTH,HEIGHT);
+
+      // Звёзды (экранные координаты с параллаксом)
+      for (let s of this.stars) {
+        const par = s.layer===1 ? 0.5 : s.layer===2 ? 0.7 : 0.9;
+        const sx = (s.x - this.camera.x) * par + WIDTH/2;
+        const sy = (s.y - this.camera.y) * par + HEIGHT/2;
+        if (sx < -20 || sx > WIDTH+20 || sy < -20 || sy > HEIGHT+20) continue;
+        const tw = 0.85 + 0.15 * (0.5 + 0.5 * Math.sin(this.t * s.tw + s.phase));
+        const b = Math.max(120, Math.min(255, Math.round(s.b * tw)));
+        ctx.fillStyle = `rgb(${b},${b},${b})`;
+        ctx.beginPath(); ctx.arc(sx, sy, s.r, 0, Math.PI*2); ctx.fill();
+      }
+
+      // Мир под камерой
+      ctx.save();
+      this.camera.apply();
+      this.planets.forEach(p => p.draw());
+      if (!this.turnActive) { const sc = this.getCurrentSpacecraft(); if (sc) this.drawPrediction(sc); }
+      this.spacecrafts.forEach(sc => sc.draw());
+      this.projectiles.forEach(pr => pr.draw());
+      this.effects.forEach(e => e.draw());
+      this.crates.forEach(c=>c.draw());
+      ctx.restore();
+
+      // Таймеры
+      if (!this.gameOver && this.turnActive) {
+        let rem = Math.max(0, Math.floor(this.maxTurnTime - this.turnTimer)); ctx.fillStyle = YELLOW; ctx.font = (Math.max(16, 20*CURRENT_SCALE)) + 'px system-ui'; ctx.textAlign = 'center'; ctx.fillText(`Время полёта: ${rem}с`, WIDTH/2, 30*CURRENT_SCALE);
+      } else if (!this.gameOver) {
+        let remAim = Math.max(0, Math.floor(this.prepTimer)); ctx.fillStyle = YELLOW; ctx.font = (Math.max(16, 20*CURRENT_SCALE)) + 'px system-ui'; ctx.textAlign = 'center'; ctx.fillText(`Прицеливание: ${remAim}с`, WIDTH/2, 30*CURRENT_SCALE);
+      }
+
+      // Показатель ветра (стрелка + подсказка)
+      const cx = WIDTH/2, cy = 54*CURRENT_SCALE;
+      const len = Math.min(120*CURRENT_SCALE, Math.abs(WIND.value)*3*CURRENT_SCALE + 20*CURRENT_SCALE);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 2*CURRENT_SCALE;
+      ctx.beginPath();
+      const dir = Math.sign(WIND.value || 1);
+      ctx.moveTo(-len * dir, 0);
+      ctx.lineTo(len * dir, 0);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(len*dir, 0);
+      ctx.lineTo(len*dir - 8*CURRENT_SCALE*dir, -5*CURRENT_SCALE);
+      ctx.lineTo(len*dir - 8*CURRENT_SCALE*dir, 5*CURRENT_SCALE);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fill();
+
+      // Подсказка ветра: текущее → целевое (через N с)
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.font = (14*CURRENT_SCALE) + 'px system-ui';
+      ctx.textAlign = 'left';
+      const wCur = Math.round(WIND.value);
+      const wTar = Math.round(WIND.target);
+      const inSec = Math.max(0, WIND.timer).toFixed(0);
+      ctx.fillText(`Ветер: ${wCur} → ${wTar} (через ${inSec}с)`, 12*CURRENT_SCALE, cy + 20*CURRENT_SCALE);
+      ctx.restore();
+
+      ctx.restore(); // shake
+
+      // Мини-карта поверх всего
+      this.drawMinimap();
+
+      overlayElem.style.display = this.gameOver ? 'flex' : 'none';
+    }
+
+    // === Онлайн-хуки ===
+    exportState(){
+      return {
+        currentPlayer: this.currentPlayer,
+        gameOver: this.gameOver,
+        winner: this.winner,
+        turnActive: this.turnActive,
+        turnTimer: this.turnTimer,
+        prepTimer: this.prepTimer,
+        wind: {value: WIND.value, target: WIND.target, timer: WIND.timer},
+        spacecrafts: this.spacecrafts.map(sc=>({x:sc.x,y:sc.y,vx:sc.vx,vy:sc.vy,angle:sc.angle,power:sc.power,color:sc.color,playerId:sc.playerId,health:sc.health,alive:sc.alive,shieldHp:sc.shieldHp,inventory:sc.inventory, grounded:sc.grounded})),
+        projectiles: this.projectiles.map(p=>({x:p.x,y:p.y,vx:p.vx,vy:p.vy,kind:p.kind,alive:p.alive,color:p.color,radius:p.radius,lifetime:p.lifetime}))
+      };
+    }
+    applyState(s){ if (!s) return; WIND.value=s.wind.value; WIND.target=s.wind.target; WIND.timer=s.wind.timer; this.currentPlayer=s.currentPlayer; this.gameOver=s.gameOver; this.winner=s.winner; this.turnActive=s.turnActive; this.turnTimer=s.turnTimer; this.prepTimer=s.prepTimer; for (let i=0;i<s.spacecrafts.length;i++){ const d=s.spacecrafts[i]; let sc=this.spacecrafts[i]; if (!sc) continue; Object.assign(sc,d); } this.projectiles = s.projectiles.map(p=>{ const pr=new Projectile(p.x,p.y,p.vx,p.vy,-1,{kind:p.kind,color:p.color}); pr.radius=p.radius; pr.lifetime=p.lifetime; return pr; }); }
+    applyNetAction(action, fromNet=false){ if (this.net && this.net.role==='client' && !fromNet){ this.net.broadcastAction(action); return; } const sc = this.getCurrentSpacecraft(); if (!sc) return; switch(action.type){ case 'SELECT_WEAPON': { const idx=action.idx|0; if (WEAPONS[idx]) sc.selected=idx; break; } case 'CYCLE_WEAPON': { sc.selected=(sc.selected+1)%WEAPONS.length; break; } case 'USE_SHIELD': { if (sc.inventory.shield>0 && sc.shieldHp<=0){ sc.inventory.shield--; sc.shieldHp=55; this.info('Щит активирован'); } break; } case 'TELEPORT': { const s= CURRENT_SCALE; const dist=220; const nx=Math.cos(sc.angle), ny=Math.sin(sc.angle); const tx=sc.x+nx*dist, ty=sc.y+ny*dist; let blocked=false; for (const p of this.planets){ if (Math.hypot(tx-p.x,ty-p.y) < p.radius + sc.radius + 4*s){ blocked=true; break; } } if (!blocked && sc.inventory.teleport>0){ sc.x=tx; sc.y=ty; sc.inventory.teleport--; this.info('Телепорт!'); } else if (!fromNet) { this.info('Слишком близко к планете'); } break; } case 'SET_AIM': { sc.angle += (action.dAngle||0); break; } case 'SET_POWER': { sc.power = Math.max(10, Math.min(100, sc.power + (action.dPower||0))); break; } case 'FIRE': { const projs = sc.fireWeapon(); if (projs.length){ for (const p of projs) this.projectiles.push(p); const mx=sc.x+Math.cos(sc.angle)*(sc.radius+6*CURRENT_SCALE); const my=sc.y+Math.sin(sc.angle)*(sc.radius+6*CURRENT_SCALE); this.effects.push(new Explosion(mx,my,0.45)); this.addShake(0.35); this.turnActive=true; this.turnTimer=0; } break; } case 'END_TURN': { this.nextTurn(); break; } } }
+
+	simulateShot(x, y, angle, power, target, planets, opts={}){
+  const s = CURRENT_SCALE;
+  let px = x + Math.cos(angle) * (6*s + 2);
+  let py = y + Math.sin(angle) * (6*s + 2);
+  let vx = Math.cos(angle) * power * 2.4;
+  let vy = Math.sin(angle) * power * 2.4;
+
+  const dt = 0.04;
+  const maxT = opts.maxT ?? 7.0;
+  const wind = WIND.value;
+  const prMass = PROJECTILE_MASS;
+
+  let t = 0;
+  while (t < maxT){
+    let fx=0, fy=0;
+    for (const p of planets){
+      const f = p.getGravityForce(px, py, prMass);
+      fx += f.fx; fy += f.fy;
+    }
+    vx += (fx * PROJECTILE_GRAVITY_MULT + wind) * dt;
+    vy += (fy * PROJECTILE_GRAVITY_MULT) * dt;
+    px += vx * dt; py += vy * dt;
+    t += dt;
+
+    const hitR = target.radius + 3*s;
+    if (Math.hypot(px - target.x, py - target.y) <= hitR) return true;
+
+    for (const p of planets){
+      if (Math.hypot(px - p.x, py - p.y) < p.radius + 3*s) return false;
+    }
+
+    if (px < -300 || px > WORLD_W+300 || py < -300 || py > WORLD_H+300) return false;
+  }
+  return false;
+}
+
+findShotFrom(sc, enemies){
+  const powerList = [40, 55, 70, 85, 100];
+  const angBase = Math.atan2( (enemies[0]?.y ?? sc.y) - sc.y, (enemies[0]?.x ?? sc.x) - sc.x );
+  const angles = [];
+  for (let d=-0.8; d<=0.8; d+=0.05){ angles.push(angBase + d); }
+
+  for (const enemy of enemies){
+    for (const pwr of powerList){
+      for (const ang of angles){
+        if (this.simulateShot(sc.x, sc.y, ang, pwr, enemy, this.planets)){
+          return { angle: ang, power: pwr, target: enemy };
+        }
+      }
+    }
+  }
+  return null;
+}
+  }
+
+  // ===== Меню/полноэкранный режим =====
+  function openMenu(){ menuElem.style.display = 'flex'; }
+  function closeMenu(){ menuElem.style.display = 'none'; }
+  function toggleFullscreen(){ if (!document.fullscreenElement) { document.documentElement.requestFullscreen?.(); } else { document.exitFullscreen?.(); } }
+
+  menuElem.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const btn = e.target.closest('button[data-p]');
+    if (!btn) return;
+    const players = parseInt(btn.getAttribute('data-p'), 10) || 2;
+    try {
+      if (optFs.checked) { toggleFullscreen(); }
+      if (game) { game.init(players); }
+      else { game = new Game(players); }
+      closeMenu();
+      overlayTextElem.textContent = `Игра начата — ход: Игрок ${game.currentPlayer+1}`;
+      overlayElem.style.display = 'flex';
+      setTimeout(()=>{ overlayElem.style.display = 'none'; }, 1200);
+    } catch(err){
+      console.error(err);
+      overlayTextElem.textContent = 'Ошибка запуска игры: ' + (err?.message || err);
+      overlayElem.style.display = 'flex';
+    }
+  });
+  btnMenu.addEventListener('click', openMenu);
+  btnFs.addEventListener('click', toggleFullscreen);
+  optP2P.addEventListener('change', ()=>{ p2pBox.style.display = optP2P.checked ? 'block' : 'none'; });
+  btnHostCreate?.addEventListener('click', async ()=>{
+    try{ if (!window.__net) window.__net = new NetRTC(); window.__net.role='host'; const offerB64 = await window.__net.createHost(); hostOffer.value = offerB64; netStatus.textContent='Статус: оффер создан'; }catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); }
+  });
+  btnHostCopyOffer?.addEventListener('click', async ()=>{ try{ await navigator.clipboard.writeText(hostOffer.value||''); netStatus.textContent='Оффер скопирован'; }catch{} });
+  btnHostSetAnswer?.addEventListener('click', async ()=>{
+    try{ if (!window.__net) return; const b64=(hostAnswer.value||'').trim(); if(!b64) return; await window.__net.acceptAnswerFromBase64(b64); netStatus.textContent='Ответ принят, ждём открытие канала'; }catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); }
+  });
+  btnHostStartGame?.addEventListener('click', ()=>{
+    if (!window.__net || window.__net.role!=='host') { netStatus.textContent='Только хост может стартовать'; return; }
+    game = new Game(2, window.__net); window.__net.attach(game); closeMenu();
+  });
+  btnClientConnect?.addEventListener('click', async ()=>{
+    try{ if (!window.__net) window.__net = new NetRTC(); window.__net.role='client'; const off=(clientOffer.value||'').trim(); if(!off) return; const ans = await window.__net.connectClientFromBase64(off); clientAnswer.value = ans; netStatus.textContent='Ответ создан — отправь хосту'; game = new Game(2, window.__net); window.__net.attach(game); }catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); }
+  });
+  btnClientCopyAnswer?.addEventListener('click', async ()=>{ try{ await navigator.clipboard.writeText(clientAnswer.value||''); netStatus.textContent='Ответ скопирован'; }catch{} });
+
+  // ===== Главный цикл =====
+  let game = null; let last = performance.now();
+  function loop(now){ const dt = Math.min(0.05, (now - last) / 1000); last = now; if (game) { game.update(dt); game.draw(); } requestAnimationFrame(loop); }
+
+  // Запуск
+  function start(){ setSceneSize(); openMenu(); requestAnimationFrame(loop); }
+  setupCanvasBackingStore();
+  start();
+</script>
+</body>
+</html>
