@@ -1265,35 +1265,39 @@ findShotFrom(sc, enemies){
   function toggleFullscreen(){ if (!document.fullscreenElement) { document.documentElement.requestFullscreen?.(); } else { document.exitFullscreen?.(); } }
 
   menuElem.addEventListener('click', (e) => {
-	  const btn = e.target.closest('button[data-p]');
-	  if (!btn) return;               // даём чекбоксам/текстовым полям работать как обычно
-	  e.preventDefault();             // только для кнопок
-	  e.stopPropagation();            // только для кнопок
-	  const players = parseInt(btn.getAttribute('data-p'), 10) || 2;
-    try {
-      if (optFs.checked) { toggleFullscreen(); }
-      if (game) { game.init(players); }
-      else { game = new Game(players); }
-	  // после создания игры на хосте
-		if (window.__net && window.__net.role === 'host') {
-		  window.__net.attach(game);              // привязать сеть к игре
-		  // сказать клиенту, сколько игроков
-		  window.__net.send({ t: 'start', playerCount: players });
-		  // сразу отправить начальный снимок состояния
-		  if (typeof game.exportState === 'function') {
-		    window.__net.sendState(game.exportState());
-		  }
-		}
+  const btn = e.target.closest('button[data-p]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const players = parseInt(btn.getAttribute('data-p'), 10) || 2;
+  
+  try {
+    if (optFs.checked) { toggleFullscreen(); }
+    
+    // ДЛЯ P2P РЕЖИМА - ОСОБАЯ ЛОГИКА
+    if (optP2P.checked) {
+      // В P2P режиме игра создается через отдельные кнопки
       closeMenu();
-      overlayTextElem.textContent = `Игра начата — ход: Игрок ${game.currentPlayer+1}`;
-      overlayElem.style.display = 'flex';
-      setTimeout(()=>{ overlayElem.style.display = 'none'; }, 1200);
-    } catch(err){
-      console.error(err);
-      overlayTextElem.textContent = 'Ошибка запуска игры: ' + (err?.message || err);
-      overlayElem.style.display = 'flex';
+      return;
     }
-  });
+    
+    // ЛОКАЛЬНАЯ ИГРА
+    if (game) { 
+      game.init(players); 
+    } else { 
+      game = new Game(players); 
+    }
+    
+    closeMenu();
+    overlayTextElem.textContent = `Игра начата — ход: Игрок ${game.currentPlayer+1}`;
+    overlayElem.style.display = 'flex';
+    setTimeout(()=>{ overlayElem.style.display = 'none'; }, 1200);
+  } catch(err){
+    console.error(err);
+    overlayTextElem.textContent = 'Ошибка запуска игры: ' + (err?.message || err);
+    overlayElem.style.display = 'flex';
+  }
+});
   btnMenu.addEventListener('click', openMenu);
   btnFs.addEventListener('click', toggleFullscreen);
   optP2P.addEventListener('change', ()=>{ p2pBox.style.display = optP2P.checked ? 'block' : 'none'; });
@@ -1305,42 +1309,12 @@ findShotFrom(sc, enemies){
     try{ if (!window.__net) return; const b64=(hostAnswer.value||'').trim(); if(!b64) return; await window.__net.acceptAnswerFromBase64(b64); netStatus.textContent='Ответ принят, ждём открытие канала'; }catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); }
   });
   btnHostStartGame?.addEventListener('click', ()=>{
-  if (!window.__net || window.__net.role!=='host') {
-    netStatus.textContent='Только хост может стартовать';
-    return;
-  }
-  // Если ты уже выбрал число игроков кнопками сверху — можно не создавать заново.
-  // На всякий случай создадим, если game ещё нет:
-  if (!window.game) {
-    window.game = new Game(2, window.__net);
-  }
-  window.__net.attach(window.game);
-  window.game.net = window.__net;
-
-  // Рассылаем старт и первый снапшот состояния
-  window.__net.send({ t:'start', playerCount: window.game.spacecrafts.length || 2 });
-  if (typeof window.game.exportState === 'function') {
-    window.__net.sendState(window.game.exportState());
-  }
-
-  netStatus.textContent='Игра запущена как хост';
-  closeMenu();
-});
- btnClientConnect?.addEventListener('click', async ()=>{
-  try{
-    if (!window.__net) window.__net = new NetRTC();
-    window.__net.role='client';
-    const off=(clientOffer.value||'').trim(); if(!off) return;
-    const ans = await window.__net.connectClientFromBase64(off);
-    clientAnswer.value = ans;
-    netStatus.textContent = 'Ответ создан — отправь хосту. Ждём старт...';
-    // ВАЖНО: игру клиент НЕ создаёт сам. Её создаст onMessage('start') из патча #1.
-  }catch(e){
-    netStatus.textContent='Ошибка: '+(e?.message||e);
-    console.error(e);
-  }
-});
-
+    if (!window.__net || window.__net.role!=='host') { netStatus.textContent='Только хост может стартовать'; return; }
+    game = new Game(2, window.__net); window.__net.attach(game); closeMenu();
+  });
+  btnClientConnect?.addEventListener('click', async ()=>{
+    try{ if (!window.__net) window.__net = new NetRTC(); window.__net.role='client'; const off=(clientOffer.value||'').trim(); if(!off) return; const ans = await window.__net.connectClientFromBase64(off); clientAnswer.value = ans; netStatus.textContent='Ответ создан — отправь хосту'; game = new Game(2, window.__net); window.__net.attach(game); }catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); }
+  });
   btnClientCopyAnswer?.addEventListener('click', async ()=>{ try{ await navigator.clipboard.writeText(clientAnswer.value||''); netStatus.textContent='Ответ скопирован'; }catch{} });
 
   // ===== Главный цикл =====
@@ -1355,59 +1329,153 @@ findShotFrom(sc, enemies){
 <script>
 /* ==== 1) Безопасно объявляем NetRTC, если его ещё нет ==== */
 window.NetRTC = window.NetRTC || class NetRTC{
-  constructor(){ this.pc=null; this.dc=null; this.role=null; this.game=null; this.connected=false;
-    this.iceServers=[{urls:'stun:stun.l.google.com:19302'}]; }
+  constructor(){ 
+    this.pc=null; this.dc=null; this.role=null; this.game=null; this.connected=false;
+    this.iceServers=[{urls:'stun:stun.l.google.com:19302'}]; 
+  }
+  
   attach(game){ this.game=game; }
-  _mk(){ this.pc = new RTCPeerConnection({iceServers:this.iceServers});
-    this.pc.oniceconnectionstatechange = ()=>{ const s=document.getElementById('netStatus'); if(s) s.textContent='Статус: '+this.pc.iceConnectionState; };
+  
+  _mk(){ 
+    this.pc = new RTCPeerConnection({iceServers:this.iceServers});
+    this.pc.oniceconnectionstatechange = ()=>{ 
+      const s=document.getElementById('netStatus'); 
+      if(s) s.textContent='Статус: '+this.pc.iceConnectionState; 
+      
+      // АВТОМАТИЧЕСКИЙ ЗАПУСК ИГРЫ НА КЛИЕНТЕ
+      if (this.pc.iceConnectionState === 'connected' && this.role === 'client') {
+        console.log('[P2P] Connected as client, starting game...');
+        this.startClientGame();
+      }
+    };
+    
+    this.pc.onicecandidate = (e) => {
+      // Обновляем оффер/ответ в реальном времени
+      if (this.pc.localDescription) {
+        const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(this.pc.localDescription))));
+        if (this.role === 'host' && document.getElementById('hostOffer')) {
+          document.getElementById('hostOffer').value = b64;
+        } else if (this.role === 'client' && document.getElementById('clientAnswer')) {
+          document.getElementById('clientAnswer').value = b64;
+        }
+      }
+    };
+    
     if (this.role==='client') this.pc.ondatachannel = (e)=>{ this.dc=e.channel; this._wireDC(); };
   }
-  _wireDC(){ if(!this.dc) return;
-    this.dc.onopen = ()=>{ this.connected=true; const s=document.getElementById('netStatus'); if(s) s.textContent='Статус: онлайн (канал открыт)'; };
-    this.dc.onclose= ()=>{ this.connected=false; const s=document.getElementById('netStatus'); if(s) s.textContent='Статус: канал закрыт'; };
-    this.dc.onmessage=(ev)=>{ try{ const m=JSON.parse(ev.data); this.onMessage(m); }catch(e){ console.warn('DC parse',e); } };
+  
+  _wireDC(){ 
+    if(!this.dc) return;
+    
+    this.dc.onopen = ()=>{ 
+      this.connected=true; 
+      const s=document.getElementById('netStatus'); 
+      if(s) s.textContent='Статус: онлайн (канал открыт)'; 
+      
+      // ЗАПУСКАЕМ ИГРУ НА КЛИЕНТЕ ПРИ ОТКРЫТИИ КАНАЛА
+      if (this.role === 'client') {
+        console.log('[P2P] Data channel opened, starting game...');
+        this.startClientGame();
+      }
+    };
+    
+    this.dc.onclose= ()=>{ this.connected=false; 
+      const s=document.getElementById('netStatus'); 
+      if(s) s.textContent='Статус: канал закрыт'; 
+    };
+    
+    this.dc.onmessage=(ev)=>{ 
+      try{ 
+        const m=JSON.parse(ev.data); 
+        this.onMessage(m); 
+      }catch(e){ 
+        console.warn('DC parse',e); 
+      } 
+    };
   }
-  onMessage(msg) {
-  if (!this.game && msg.t !== 'start') {
-    // если игра ещё не создана на клиенте — ждём start
-  }
-
-  if (msg.t === 'start') {
-    // это видит КЛИЕНТ: создаём локальную копию игры
-    if (this.role === 'client') {
-      // если уже есть игра — не дублируем
-      if (!window.game) {
-        window.game = new Game(msg.playerCount || 2, this);
-        this.attach(window.game);
-        window.game.net = this;
+  
+  // НОВЫЙ МЕТОД: запуск игры на клиенте
+  startClientGame() {
+    if (!window.game) {
+      console.log('[P2P] Creating new game for client');
+      window.game = new Game(2, this);
+      this.attach(window.game);
+      
+      // Закрываем меню
+      const menuElem = document.getElementById('menu');
+      if (menuElem) menuElem.style.display = 'none';
+      
+      // Показываем сообщение
+      const overlayElem = document.getElementById('overlay');
+      const overlayTextElem = document.getElementById('overlayText');
+      if (overlayElem && overlayTextElem) {
+        overlayTextElem.textContent = 'Подключено к хосту - ожидание хода...';
+        overlayElem.style.display = 'flex';
+        setTimeout(() => { 
+          if (overlayElem.style.display === 'flex') overlayElem.style.display = 'none'; 
+        }, 2000);
       }
     }
-    return;
   }
-
-  if (msg.t === 'action' && this.role === 'host') {
-    this.game?.applyNetAction?.(msg.action, true);
-  } else if (msg.t === 'state' && this.role === 'client') {
-    this.game?.applyState?.(msg.state);
+  
+  onMessage(msg){ 
+    if(!this.game) return;
+    
+    if (msg.t==='action' && this.role==='host'){ 
+      this.game.applyNetAction?.(msg.action, true); 
+    }
+    else if (msg.t==='state' && this.role==='client'){ 
+      this.game.applyState?.(msg.state); 
+    }
+    else if (msg.t==='start' && this.role==='client'){ 
+      console.log('[P2P] Received start command from host');
+      // Хост сообщает о начале игры
+      this.startClientGame();
+    }
   }
-}
-  send(o){ if (this.dc && this.dc.readyState==='open') this.dc.send(JSON.stringify(o)); }
+  
+  send(o){ 
+    if (this.dc && this.dc.readyState==='open') {
+      this.dc.send(JSON.stringify(o)); 
+    }
+  }
+  
   broadcastAction(action){ this.send({t:'action', action}); }
   sendState(state){ this.send({t:'state', state}); }
-  async createHost(){ this.role='host'; this._mk(); this.dc=this.pc.createDataChannel('game'); this._wireDC();
-    const offer=await this.pc.createOffer(); await this.pc.setLocalDescription(offer);
-    return btoa(unescape(encodeURIComponent(JSON.stringify(this.pc.localDescription)))); }
-  async acceptAnswerFromBase64(b64){ const json=JSON.parse(decodeURIComponent(escape(atob(b64)))); await this.pc.setRemoteDescription(json); }
-  async connectClientFromBase64(b64){ this.role='client'; this._mk();
-    const offer=JSON.parse(decodeURIComponent(escape(atob(b64))));
+  
+  async createHost(){ 
+    this.role='host'; 
+    this._mk(); 
+    this.dc = this.pc.createDataChannel('game'); 
+    this._wireDC();
+    const offer = await this.pc.createOffer(); 
+    await this.pc.setLocalDescription(offer);
+    // Ждем немного чтобы ICE кандидаты собрались
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return btoa(unescape(encodeURIComponent(JSON.stringify(this.pc.localDescription)))); 
+  }
+  
+  async acceptAnswerFromBase64(b64){ 
+    const json = JSON.parse(decodeURIComponent(escape(atob(b64)))); 
+    await this.pc.setRemoteDescription(json); 
+  }
+  
+  async connectClientFromBase64(b64){ 
+    this.role='client'; 
+    this._mk();
+    const offer = JSON.parse(decodeURIComponent(escape(atob(b64))));
     await this.pc.setRemoteDescription(offer);
-    const answer=await this.pc.createAnswer(); await this.pc.setLocalDescription(answer);
-    return btoa(unescape(encodeURIComponent(JSON.stringify(this.pc.localDescription)))); }
+    const answer = await this.pc.createAnswer(); 
+    await this.pc.setLocalDescription(answer);
+    // Ждем немного чтобы ICE кандидаты собрались
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return btoa(unescape(encodeURIComponent(JSON.stringify(this.pc.localDescription)))); 
+  }
 };
 
 /* ==== 2) Подключаем UI — ждём, пока DOM и (опционально) Game загрузятся ==== */
+/* ==== 2) Подключаем UI ==== */
 (function wireP2P(){
-  // найдём элементы
   const $ = id => document.getElementById(id);
   const optP2P = $('optP2P'), p2pBox = $('p2pBox'), netStatus = $('netStatus');
   const btnHostCreate=$('btnHostCreate'), btnHostCopyOffer=$('btnHostCopyOffer'),
@@ -1416,203 +1484,123 @@ window.NetRTC = window.NetRTC || class NetRTC{
   const btnClientConnect=$('btnClientConnect'), btnClientCopyAnswer=$('btnClientCopyAnswer'),
         clientOffer=$('clientOffer'), clientAnswer=$('clientAnswer');
 
-  // базовая проверка DOM
-  const allOk = [optP2P,p2pBox,netStatus,btnHostCreate,btnHostSetAnswer,btnHostStartGame,
-                 hostOffer,hostAnswer,btnClientConnect,clientOffer,clientAnswer].every(Boolean);
-  if (!allOk) {
-    console.warn('[P2P] Не все элементы найдены. Проверьте id-ы разметки.');
+  if (![optP2P,p2pBox,netStatus,btnHostCreate,btnHostSetAnswer,btnHostStartGame,
+        hostOffer,hostAnswer,btnClientConnect,clientOffer,clientAnswer].every(Boolean)) {
+    console.warn('[P2P] Не все элементы найдены');
     return;
   }
 
-  // раскрываем/скрываем панель по чекбоксу
   p2pBox.style.display = optP2P.checked ? 'block' : 'none';
   optP2P.addEventListener('change', ()=>{ p2pBox.style.display = optP2P.checked ? 'block' : 'none'; });
 
-  // единая сетка
+  // Единая сеть
   if (!window.__net) window.__net = new NetRTC();
 
-  // Клики: ХОСТ
+  // КЛИКИ: ХОСТ
   btnHostCreate.addEventListener('click', async ()=>{
-    try{ window.__net.role='host'; const off=await window.__net.createHost();
-      hostOffer.value=off; netStatus.textContent='Оффер создан'; console.log('[P2P] Host offer:', off.slice(0,32)+'…'); }
+    try{ 
+      window.__net.role='host'; 
+      const off = await window.__net.createHost();
+      hostOffer.value = off; 
+      netStatus.textContent='Оффер создан - отправьте другу'; 
+    }
     catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); console.error(e); }
   });
-  btnHostCopyOffer?.addEventListener('click', async ()=>{
-    try{ await navigator.clipboard.writeText(hostOffer.value||''); netStatus.textContent='Оффер скопирован'; }catch{}
+  
+  btnHostCopyOffer.addEventListener('click', async ()=>{
+    try{ 
+      await navigator.clipboard.writeText(hostOffer.value||''); 
+      netStatus.textContent='Оффер скопирован в буфер'; 
+    }catch(e){
+      netStatus.textContent='Не удалось скопировать';
+    }
   });
+  
   btnHostSetAnswer.addEventListener('click', async ()=>{
-    try{ const b64=(hostAnswer.value||'').trim(); if(!b64) return;
+    try{ 
+      const b64 = (hostAnswer.value||'').trim(); 
+      if(!b64) {
+        netStatus.textContent='Вставьте ответ от друга';
+        return;
+      }
       await window.__net.acceptAnswerFromBase64(b64);
-      netStatus.textContent='Ответ принят, ждём открытие канала'; }
-    catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); console.error(e); }
+      netStatus.textContent='Ответ принят - можно начинать игру'; 
+    }
+    catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); }
   });
+  
   btnHostStartGame.addEventListener('click', ()=>{
-    if (!window.game){ netStatus.textContent='Сначала выбери число игроков (1–4)'; return; }
-    window.__net.attach(window.game); window.game.net = window.__net;
-    netStatus.textContent='Игра запущена как хост';
+    if (!window.game) {
+      // СОЗДАЕМ ИГРУ ДЛЯ ХОСТА
+      window.game = new Game(2, window.__net); 
+    }
+    window.__net.attach(window.game); 
+    
+    // ОТПРАВЛЯЕМ КОМАНДУ СТАРТА КЛИЕНТУ
+    if (window.__net.connected) {
+      window.__net.send({t: 'start'});
+    }
+    
+    // ЗАКРЫВАЕМ МЕНЮ
+    const menuElem = document.getElementById('menu');
+    if (menuElem) menuElem.style.display = 'none';
+    
+    netStatus.textContent='Игра запущена - клиент подключен';
   });
 
-  // Клики: КЛИЕНТ
+  // КЛИКИ: КЛИЕНТ
   btnClientConnect.addEventListener('click', async ()=>{
-    try{ const off=(clientOffer.value||'').trim(); if(!off) return;
-      const ans=await window.__net.connectClientFromBase64(off);
-      clientAnswer.value=ans; netStatus.textContent='Ответ создан — отправь хосту';
-      if (!window.game){ /* на всякий случай */ window.game = new (window.Game||function(){})();
-        if (!window.game.update) { /* если Game ещё не готов — просто логнем */ console.warn('[P2P] Game ещё не загружен — но канал установлен'); } }
-      window.__net.attach(window.game); window.game.net = window.__net;
-    }catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); console.error(e); }
+    try{ 
+      const off = (clientOffer.value||'').trim(); 
+      if(!off) {
+        netStatus.textContent='Вставьте оффер от хоста';
+        return;
+      }
+      
+      const ans = await window.__net.connectClientFromBase64(off);
+      clientAnswer.value = ans; 
+      netStatus.textContent='Подключение установлено - отправьте ответ хосту';
+      
+      // ИГРА ЗАПУСТИТСЯ АВТОМАТИЧЕСКИ ПРИ ПОЛНОМ ПОДКЛЮЧЕНИИ
+      
+    }catch(e){ netStatus.textContent='Ошибка: '+(e?.message||e); }
   });
-  btnClientCopyAnswer?.addEventListener('click', async ()=>{
-    try{ await navigator.clipboard.writeText(clientAnswer.value||''); netStatus.textContent='Ответ скопирован'; }catch{}
+  
+  btnClientCopyAnswer.addEventListener('click', async ()=>{
+    try{ 
+      await navigator.clipboard.writeText(clientAnswer.value||''); 
+      netStatus.textContent='Ответ скопирован в буфер'; 
+    }catch(e){
+      netStatus.textContent='Не удалось скопировать';
+    }
   });
 
-  // Патч рассылки состояния у хоста — только когда Game реально объявлен
+  // Патч для синхронизации состояния
   function patchGameWhenReady(){
-    if (!(window.Game && Game.prototype && Game.prototype.update)) return setTimeout(patchGameWhenReady, 50);
+    if (!(window.Game && Game.prototype && Game.prototype.update)) {
+      return setTimeout(patchGameWhenReady, 50);
+    }
+    
     if (Game.prototype.__netPatched) return;
+    
     const _upd = Game.prototype.update;
     Game.prototype.update = function(dt){
       _upd.call(this, dt);
       if (this.net && this.net.role==='host' && this.net.connected){
         this._stateSendTimer = (this._stateSendTimer||0) + dt;
-        if (this._stateSendTimer > 0.1){ this._stateSendTimer=0; this.net.sendState(this.exportState?.()); }
+        if (this._stateSendTimer > 0.1){ 
+          this._stateSendTimer=0; 
+          this.net.sendState(this.exportState?.()); 
+        }
       }
     };
+    
     Game.prototype.__netPatched = true;
-    console.log('[P2P] Game patched for host state broadcast');
   }
+  
   patchGameWhenReady();
-
-  console.log('[P2P] UI wired');
-})();
-</script>
-<script>
-/* помощники кодирования */
-const enc = obj => btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
-const dec = b64 => JSON.parse(decodeURIComponent(escape(atob(b64))));
-
-/* если NetRTC уже есть — расширим/перепишем только нужные методы */
-if (window.NetRTC) {
-  NetRTC.prototype.reset = function(){
-    try{ this.dc?.close(); }catch{}
-    try{ this.pc?.close(); }catch{}
-    this.pc = null; this.dc = null; this.connected = false;
-  };
-
-  NetRTC.prototype.createHost = async function(){
-    // всегда начинаем чисто
-    this.reset();
-    this.role = 'host';
-    this._mk();
-    this.dc = this.pc.createDataChannel('game');
-    this._wireDC();
-    const offer = await this.pc.createOffer();
-    await this.pc.setLocalDescription(offer); // -> have-local-offer
-    return enc(this.pc.localDescription);     // гарантированно offer
-  };
-
-  NetRTC.prototype.acceptAnswerFromBase64 = async function(b64){
-    if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
-      throw new Error('Сначала нажмите «Создать соединение», затем вставьте ответ один раз.');
-    }
-    const answer = dec(b64);
-    if (answer?.type !== 'answer') {
-      throw new Error('Ожидался ANSWER от клиента, похоже вы вставили OFFER.');
-    }
-    await this.pc.setRemoteDescription(answer); // -> stable
-  };
-
-  NetRTC.prototype.connectClientFromBase64 = async function(b64){
-    // клиент тоже начинает с нуля
-    this.reset();
-    this.role = 'client';
-    this._mk();
-    const offer = dec(b64);
-    if (offer?.type !== 'offer') {
-      throw new Error('Ожидался OFFER от хоста, проверьте, что не перепутали строки.');
-    }
-    await this.pc.setRemoteDescription(offer);  // -> have-remote-offer
-    const answer = await this.pc.createAnswer();
-    await this.pc.setLocalDescription(answer);  // -> stable
-    return enc(this.pc.localDescription);       // гарантированно answer
-  };
-}
-</script>
-<script>
-// === Hard override NetRTC prototype to handle 'start' properly, regardless of earlier class definitions ===
-(function(){
-  if (!window.NetRTC) { console.warn('[P2P] NetRTC not found'); return; }
-
-  const enc = obj => btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
-  const dec = b64 => JSON.parse(decodeURIComponent(escape(atob(b64))));
-
-  Object.assign(NetRTC.prototype, {
-    reset(){
-      try{ this.dc?.close(); }catch{}
-      try{ this.pc?.close(); }catch{}
-      this.pc = null; this.dc = null; this.connected = false;
-    },
-    async createHost(){
-      this.reset();
-      this.role = 'host';
-      this._mk();
-      this.dc = this.pc.createDataChannel('game');
-      this._wireDC();
-      const offer = await this.pc.createOffer();
-      await this.pc.setLocalDescription(offer);
-      return enc(this.pc.localDescription);
-    },
-    async acceptAnswerFromBase64(b64){
-      if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
-        throw new Error('Сначала нажмите «Создать соединение», затем вставьте ответ один раз.');
-      }
-      const answer = dec(b64);
-      if (answer?.type !== 'answer') throw new Error('Ожидался ANSWER от клиента.');
-      await this.pc.setRemoteDescription(answer); // -> stable
-    },
-    async connectClientFromBase64(b64){
-      this.reset();
-      this.role = 'client';
-      this._mk();
-      const offer = dec(b64);
-      if (offer?.type !== 'offer') throw new Error('Ожидался OFFER от хоста.');
-      await this.pc.setRemoteDescription(offer);  // -> have-remote-offer
-      const answer = await this.pc.createAnswer();
-      await this.pc.setLocalDescription(answer);  // -> stable
-      return enc(this.pc.localDescription);
-    },
-    onMessage(msg){
-      // 1) Хост принимает действия от клиента
-      if (msg.t === 'action' && this.role === 'host') {
-        this.game?.applyNetAction?.(msg.action, true);
-        return;
-      }
-      // 2) Клиент применяет состояние от хоста
-      if (msg.t === 'state' && this.role === 'client') {
-        this.game?.applyState?.(msg.state);
-        return;
-      }
-      // 3) Клиент создаёт игру, когда хост шлёт старт
-      if (msg.t === 'start' && this.role === 'client') {
-        if (!window.game) {
-          window.game = new Game(msg.playerCount || 2, this);
-          this.attach(window.game);
-          window.game.net = this;
-        }
-        return;
-      }
-    },
-    send(o){ if (this.dc && this.dc.readyState === 'open') this.dc.send(JSON.stringify(o)); },
-    broadcastAction(action){ this.send({ t:'action', action }); },
-    sendState(state){ this.send({ t:'state', state }); },
-  });
-
-  console.log('[P2P] NetRTC prototype patched (onMessage/start fixed)');
 })();
 </script>
 
 </body>
 </html>
-
-
-
