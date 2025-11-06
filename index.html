@@ -1301,8 +1301,32 @@ while (true){
           break;
         }
         case 'TELEPORT': {
-          const s= CURRENT_SCALE; const dist=220; const nx=Math.cos(sc.angle), ny=Math.sin(sc.angle); const tx=sc.x+nx*dist, ty=sc.y+ny*dist; let blocked=false; for (const p of this.planets){ if (Math.hypot(tx-p.x,ty-p.y) < p.radius + sc.radius + 4*s){ blocked=true; break; } } if (!blocked && sc.inventory.teleport>0){ sc.x=tx; sc.y=ty; sc.inventory.teleport--; this.info('Телепорт!'); } else if (!fromNet) { this.info('Слишком близко к планете'); } break;
-        }
+		  const s = CURRENT_SCALE;
+		  const dist = 220;
+		  const nx = Math.cos(sc.angle), ny = Math.sin(sc.angle);
+		  const tx = sc.x + nx*dist, ty = sc.y + ny*dist;
+		
+		  let blocked=false;
+		  for (const p of this.planets){
+		    if (Math.hypot(tx-p.x,ty-p.y) < p.radius + sc.radius + 4*s){ blocked=true; break; }
+		  }
+		
+		  if (!blocked && sc.inventory.teleport>0){
+		    sc.x = tx; sc.y = ty;
+		    sc.vx = 0; sc.vy = 0;              // чтобы корабль не «скользил» после тп
+		    sc.inventory.teleport--;
+		    this.info('Телепорт!');
+		
+		    // 🔧 ВАЖНО: сбросить состояние хода, чтобы можно было дальше целиться/стрелять
+		    this.turnActive = false;
+		    this.turnTimer = 0;
+		    this.prepTimer = this.prepMaxTime;  // даём полный таймер на прицеливание
+		    this.updateHUD();
+		  } else if (!fromNet) {
+		    this.info('Слишком близко к планете');
+		  }
+		  break;
+		}
         case 'SET_AIM': { sc.angle += (action.dAngle||0); break; }
         case 'SET_POWER': { sc.power = Math.max(10, Math.min(100, sc.power + (action.dPower||0))); break; }
         case 'FIRE': {
@@ -1712,3 +1736,4 @@ window.NetRTC = window.NetRTC || class NetRTC{
 
 </body>
 </html>
+
